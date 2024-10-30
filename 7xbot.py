@@ -11,11 +11,13 @@ from dotenv import load_dotenv
 import discord
 from discord.channel import TextChannel
 import openai
-import requests
 from discord.ext import commands
 from discord.ext.commands import MissingRequiredArgument, has_any_role
 
 load_dotenv()
+
+
+#If you can see this, the git commit worked.
 
 bot_start_time = datetime.now()
 
