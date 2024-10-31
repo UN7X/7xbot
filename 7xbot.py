@@ -16,8 +16,7 @@ from discord.ext.commands import MissingRequiredArgument, has_any_role
 
 load_dotenv()
 
-
-#If you can see this, the git commit worked.
+# :3
 
 bot_start_time = datetime.now()
 
@@ -48,8 +47,7 @@ ND_API_KEY = os.getenv('ND_API_KEY')
 openai.api_key = OPENAI_API_KEY
 fallback_model = "gpt-3.5-turbo-1106"
 def get_build_id():
-  # This could be a Git commit hash, tag, or a simple counter
-  return "v1.0.123"
+  return "v1.9"
 os.system('cls' if os.name == 'nt' else 'clear')
 
 tips = [
@@ -849,6 +847,117 @@ async def sudo(ctx,
     except Exception as e:
       await ctx.send(f"An error occurred: {e}")
 
+# File to store user roles and their created slots
+SLOTS_FILE = "role_slots.json"
+
+# Maximum number of custom roles a user can create
+MAX_SLOTS = 3
+
+# Load slots data from file
+def load_slots():
+    if os.path.exists(SLOTS_FILE):
+        with open(SLOTS_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+# Save slots data to file
+def save_slots(slots):
+    with open(SLOTS_FILE, 'w') as f:
+        json.dump(slots, f, indent=4)
+
+# Command group for role management
+@bot.group(invoke_without_command=True)
+async def role(ctx):
+    await ctx.send("Usage: 7/role create <role name> <hex color>, 7/role delete <@role>, 7/role list")
+
+# Role creation
+@role.command(help="Create a custom cosmetic role. Maximum 3 slots.")
+async def create(ctx, role_name: str, role_color: str):
+    user = ctx.author
+    guild = ctx.guild
+    slots = load_slots()
+
+    # Check if the user already has their slots filled
+    user_slots = slots.get(str(user.id), [])
+    if len(user_slots) >= MAX_SLOTS:
+        await ctx.send(f"{user.mention}, you already have {MAX_SLOTS} custom roles. You need to delete or replace one to create a new one.")
+        return
+
+    # Validate hex color
+    try:
+        role_color = discord.Color(int(role_color.lstrip("#"), 16))
+    except ValueError:
+        await ctx.send("Invalid hex color format. Please provide a valid hex color code.")
+        return
+
+    # Create the new role in the server
+    new_role = await guild.create_role(name=role_name, color=role_color)
+    
+    # Save the role ID to the user's slot
+    user_slots.append(new_role.id)
+    slots[str(user.id)] = user_slots
+    save_slots(slots)
+
+    await ctx.send(f"{user.mention}, the role `{role_name}` has been created with color `{role_color}`.")
+
+# Role deletion
+@role.command(help="Delete one of your custom cosmetic roles.")
+async def delete(ctx, role: discord.Role):
+    user = ctx.author
+    guild = ctx.guild
+    slots = load_slots()
+
+    # Check if the role is in the user's slots
+    user_slots = slots.get(str(user.id), [])
+    if role.id not in user_slots:
+        await ctx.send(f"{user.mention}, you did not create the role `{role.name}`, so you cannot delete it.")
+        return
+
+    # Remove the role from the guild and user's slot list
+    await role.delete()
+    user_slots.remove(role.id)
+    slots[str(user.id)] = user_slots
+    save_slots(slots)
+
+    await ctx.send(f"{user.mention}, the role `{role.name}` has been deleted.")
+
+# Role list
+@role.command(help="List your custom roles and remaining slots.")
+async def list(ctx):
+    user = ctx.author
+    guild = ctx.guild
+    slots = load_slots()
+
+    # Get user's roles
+    user_slots = slots.get(str(user.id), [])
+
+    embed = discord.Embed(title=f"{user.display_name}'s Custom Roles", color=discord.Color.blue())
+    
+    if user_slots:
+        for role_id in user_slots:
+            role = guild.get_role(role_id)
+            embed.add_field(name=role.name, value=f"Color: {role.color}", inline=False)
+    else:
+        embed.add_field(name="No Custom Roles", value="You have not created any custom roles.", inline=False)
+
+    embed.set_footer(text=f"Slots used: {len(user_slots)}/{MAX_SLOTS}")
+    await ctx.send(embed=embed)
+
+# Ensure we catch role deletions and remove them from users' slots
+@bot.event
+async def on_guild_role_delete(role):
+    slots = load_slots()
+
+    # Iterate over all users and remove the role from their slots if it exists
+    for user_id, user_roles in slots.items():
+        if role.id in user_roles:
+            user_roles.remove(role.id)
+            if len(user_roles) == 0:
+                del slots[user_id]  # Remove user from dict if no roles left
+            else:
+                slots[user_id] = user_roles
+
+    save_slots(slots)
 
 poll_explanation = """
 ***Info:***
