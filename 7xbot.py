@@ -3,6 +3,7 @@ import base64
 import json
 import time
 import os
+import requests
 import random
 import string
 from datetime import datetime
@@ -13,6 +14,7 @@ from discord.channel import TextChannel
 import openai
 from discord.ext import commands
 from discord.ext.commands import MissingRequiredArgument, has_any_role
+from notdiamond import NotDiamond
 
 load_dotenv()
 
@@ -43,7 +45,7 @@ new_status = f"{days_until_christmas()} Days until Christmas!"
 status_hold = False
 my_secret = os.getenv('BOT_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-ND_API_KEY = os.getenv('ND_API_KEY')
+ND_API_KEY = os.getenv('NOTDIAMOND_API_KEY')
 openai.api_key = OPENAI_API_KEY
 fallback_model = "gpt-3.5-turbo-1106"
 def get_build_id():
@@ -480,7 +482,23 @@ def encode_image(image_path):
     print(f"Encoding image {image_path}")
     return base64.b64encode(image_file.read()).decode("utf-8")
 
-db = {}
+def load_db(filename="database.json"):
+  try:
+    if os.path.exists(filename):
+      with open(filename, 'r') as f:
+        return json.load(f)
+    return {}
+  except FileNotFoundError:
+    with open(filename, 'w') as f:
+      return {}
+
+# Save database to a JSON file
+def save_db(data, filename="database.json"):
+  with open(filename, 'w') as f:
+    json.dump(data, f, indent=4)
+
+# Initialize the database
+db = load_db()
 
 # Function to save messages to Database
 def save_message(guild_id, user_id, message):
@@ -496,8 +514,234 @@ def get_messages(guild_id, user_id):
   key = f"{guild_id}-{user_id}"
   print(f"Key: {key}")
   return db.get(key, [])
+  # Load database from a JSON file if it exists
 
+# Define the Not Diamond routing client
+client = NotDiamond()
 
+# Function to encode images in Base64
+def encode_image(image_path):
+  with open(image_path, "rb") as image_file:
+    print(f"Encoding image {image_path}")
+    return base64.b64encode(image_file.read()).decode("utf-8")
+
+def load_db(filename="database.json"):
+  try:
+    if os.path.exists(filename):
+      with open(filename, 'r') as f:
+        return json.load(f) 
+    return {}
+  except FileNotFoundError:
+    with open(filename, 'w') as f:
+      return {}
+
+# Save database to a JSON file
+def save_db(data, filename="database.json"):
+  with open(filename, 'w') as f:
+    json.dump(data, f, indent=4)
+
+# Initialize the database
+db = load_db()
+
+# Function to save messages to Database
+def save_message(guild_id, user_id, message):
+  key = f"{guild_id}-{user_id}"
+  messages = db.get(key, [])
+  messages.append(message)
+  db[key] = messages
+  save_db(db)  # Save the db after updating
+  print(messages)
+
+# Function to retrieve messages from Database
+def get_messages(guild_id, user_id):
+  key = f"{guild_id}-{user_id}"
+  print(f"Key: {key}")
+  return db.get(key, [])
+
+# Function to check user's points
+def check_points(user_id):
+  print("Checking points...")
+  return db.get(f"points_{user_id}", 0)
+
+# Function to set user's points
+def set_points(user_id, points):
+  db[f"points_{user_id}"] = points
+  save_db(db)
+  print(f"Set points for user {user_id} to {points}")
+
+# Function to update user's points
+def update_points(user_id, points):
+  current_points = check_points(user_id)
+  new_points = max(current_points + points, 0)
+  set_points(user_id, new_points)
+  print(f"Updated points for user {user_id} to {new_points}")
+
+# Points command group
+@bot.group(invoke_without_command=True)
+async def points(ctx):
+    await ctx.send("Usage: `7/points <add/remove/query> <@user> [amount]`")
+
+@points.command()
+@commands.has_permissions(manage_guild=True)
+async def add(ctx, member: discord.Member, amount: int):
+    user_id = str(member.id)
+    update_points(user_id, amount)
+    await ctx.send(f"Added {amount} points to {member.mention}. They now have {check_points(user_id)} points.")
+
+@points.command()
+@commands.has_permissions(manage_guild=True)
+async def remove(ctx, member: discord.Member, amount: int):
+    user_id = str(member.id)
+    update_points(user_id, -amount)
+    await ctx.send(f"Removed {amount} points from {member.mention}. They now have {check_points(user_id)} points.")
+
+@points.command()
+async def query(ctx, member: Optional[discord.Member] = None):
+    if member is None:
+        member = ctx.author
+    user_id = str(member.id)
+    points = check_points(user_id)
+    await ctx.send(f"{member.mention} has {points} points.")
+
+# Function to check user's points
+def check_points(user_id):
+  print("Checking points...")
+  return db.get(f"points_{user_id}", 0)
+
+# Function to update user's points
+def update_points(user_id, points):
+  current_points = check_points(user_id)
+  new_points = max(current_points + points, 0)
+  db[f"points_{user_id}"] = new_points
+  save_db(db)  # Save the db after updating
+  print("Updated points for user", user_id, "to", new_points)
+
+# Function to process the AI query using NotDiamond
+async def process_query(messages, image_path=None):
+  if image_path:
+    # If there's an image, encode it and prepare the message
+    encoded_image = encode_image(image_path)
+    messages.append({"role": "system", "content": f"data:image/jpeg;base64,{encoded_image}"})
+
+  try:
+    result, session_id, provider = client.chat.completions.create(
+      messages=messages,
+      model=['openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/gpt-3.5-turbo'],
+      tradeoff="cost"
+    )
+    response_text = result.content
+    model_used = provider.model
+    print("Not Diamond session ID: ", session_id)
+    print("LLM called: ", model_used)
+    print("LLM output: ", response_text)
+  except Exception as e:
+    response_text = "An error occurred while processing your request."
+    model_used = "unknown"
+    print(f"Error in NotDiamond client: {e}")
+
+  return response_text, model_used
+
+ai_explanation = """
+***Info:***
+Interacts with an advanced AI to simulate conversation or answer queries. Costs points based on the complexity and model used.
+Your queries will be processed and sent to an appropriate model selected by NotDiamond.
+If an image is sent, it will automatically use an appropriate model that supports image inputs.
+- Normal conversation maintains context for a more coherent interaction.
+- Optional flag `-s` for a standalone query without context, which costs fewer points.
+
+**Usage:** 
+`7/ai "<message>"` (Engages in a contextual conversation. Costs more points based on the AI model used.)
+`7/ai "<message>" -s` (Engages in a standalone query without considering conversation history. Costs fewer points.)
+
+**Examples:**
+`7/ai "What is the capital of France?"` (Contextual conversation)
+`7/ai "What is the capital of France?" -s` (Standalone query)
+
+***Cost:***
+- **openai/gpt-4o-mini**: 10 points per use.
+- **openai/gpt-4o**: 20 points per use.
+- **Discount for '-s' flag**: 50% off the above prices.
+
+***Earning Points:***
+- You earn **0.0625 points** for each message you send in the server.
+
+***Tips:***
+- Use the `-s` flag for quick queries when you don't need the context of a conversation. It saves your points.
+- Ensure you have enough points before using the command. You can earn points by participating in the server and using other features.
+- The AI's response quality and understanding may vary based on the auto-selected model by the complexity of your query.
+"""
+
+# Modify the ai_command function to check points before calling the LLM
+@bot.command(name="ai", usage="7/ai <message> <optional flag: -s>", aliases=["ai_bot"], help=ai_explanation)
+async def ai_command(ctx, *, message: str = None):
+    if message is None or message.strip() == "":
+        await ctx.send("Please provide a message. For help, type: `7/ai help`")
+        return
+    print(message)
+    user_id = str(ctx.author.id)
+    guild_id = str(ctx.guild.id)
+    standalone = '-s' in message
+    message_content = message.replace('-s', '').strip()
+    if message_content.lower() == "help":
+        embed = discord.Embed(title="AI Command",
+                              description=ai_explanation,
+                              color=0x00ff00)
+        await ctx.send(embed=embed)
+        return
+
+    # Define the base cost for each model
+    model_costs = {
+        'openai/gpt-4o-mini': 10,  # lower-cost model
+        'openai/gpt-4o': 20       # higher-cost model
+    }
+
+    # Estimate the maximum possible cost
+    max_cost = max(model_costs.values())
+    if standalone:
+        max_cost = int(max_cost * 0.5)  # Apply discount
+
+    user_points = check_points(user_id)
+
+    if user_points >= max_cost:
+        # Prepare messages
+        if standalone:
+            messages = [{"role": "user", "content": message_content}]
+        else:
+            conversation = get_messages(guild_id, user_id)
+            messages = conversation + [{"role": "user", "content": message_content}]
+        
+        # Process the query and get the response and model used
+        response, model_used = await process_query(messages)
+
+        # Determine the actual cost
+        cost = model_costs.get(model_used, 10)
+        if standalone:
+            cost = int(cost * 0.5)
+
+        update_points(user_id, -cost)  # Deduct the cost
+        await ctx.send(response)
+
+        if not standalone:
+            save_message(guild_id, user_id, {"role": "user", "content": message_content})
+            save_message(guild_id, user_id, {"role": "assistant", "content": response})
+    else:
+        await ctx.send(
+            f"You don't have enough points for this operation. It costs up to {max_cost} points, but you have {user_points}."
+        )
+
+# Event handler to give users points for each message they send
+@bot.event
+async def on_message(message):
+  if message.author.bot:
+    return  # Ignore messages from bots
+  print(message)
+
+  user_id = str(message.author.id)
+  print(f"User ID: {user_id}")  # Debug print
+  print(f"Current points: {check_points(user_id)}")  # Debug print
+  update_points(user_id, 0.0625)  # Give user 0.0625 points for each message
+  print(f"Updated points: {check_points(user_id)}")  # Debug print
+  await bot.process_commands(message)  # Ensure other commands are processed
 
 
 http_explanation = """
@@ -1049,6 +1293,3 @@ async def poll(ctx, *args):
 
 
 bot.run(my_secret)
-
-
-
