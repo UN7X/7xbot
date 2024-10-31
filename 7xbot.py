@@ -480,6 +480,7 @@ def encode_image(image_path):
     print(f"Encoding image {image_path}")
     return base64.b64encode(image_file.read()).decode("utf-8")
 
+db = {}
 
 # Function to save messages to Database
 def save_message(guild_id, user_id, message):
