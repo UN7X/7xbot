@@ -376,13 +376,43 @@ async def cancel(ctx, ecancel: bool = False):
 
 @bot.command(name="help")
 async def help_command(ctx):
-  print("Help command called")  # Debug print
-  help_message = "List of available commands:\n"
-  for command in bot.commands:
-    command_usage = f"7/{command.name} {' ' + command.usage if command.usage else ''}".strip()  # Correct command usage display
-    help_message += f"{command_usage}: {command.help or 'No description provided.'}\n"
-  await ctx.send(help_message)
-  print("Help message sent")  # Debug print
+    print("Help command called")
+    try:
+        # Group commands into categories (max 10 commands per embed)
+        commands_list = list(bot.commands)
+        chunks = [commands_list[i:i + 10] for i in range(0, len(commands_list), 10)]
+        
+        for i, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title=f"7x Command List (Page {i+1}/{len(chunks)})",
+                description="List of available commands:",
+                color=0x00ff00
+            )
+            
+            for command in chunk:
+                # Safely get command attributes
+                command_usage = getattr(command, 'usage', 'No usage provided.')
+                command_help = getattr(command, 'help', 'No description provided.')
+                
+                # Truncate help text if too long
+                if len(command_help) > 1024:
+                    command_help = command_help[:1021] + "..."
+                
+                # Add field to embed
+                embed.add_field(
+                    name=f"7/{command.name} {command_usage}".strip(),
+                    value=command_help,
+                    inline=False
+                )
+            
+            # Send the embed
+            await ctx.send(embed=embed)
+        
+        print("Help message sent")
+    except Exception as e:
+        print(f"Error in help command: {e}")
+        await ctx.send("An error occurred while displaying help.")
+
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -674,22 +704,31 @@ async def ai_command(ctx, *, message: str = None):
     if message is None or message.strip() == "":
         await ctx.send("Please provide a message. For help, type: `7/ai help`")
         return
+
     print(message)
     user_id = str(ctx.author.id)
     guild_id = str(ctx.guild.id)
     standalone = '-s' in message
     message_content = message.replace('-s', '').strip()
+    
     if message_content.lower() == "help":
-        embed = discord.Embed(title="AI Command",
-                              description=ai_explanation,
-                              color=0x00ff00)
-        await ctx.send(embed=embed)
+        # Split AI explanation into chunks of 1024 characters
+        chunks = [ai_explanation[i:i + 1024] for i in range(0, len(ai_explanation), 1024)]
+        
+        for i, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title=f"AI Command Help (Part {i+1}/{len(chunks)})",
+                description=chunk,
+                color=0x00ff00
+            )
+            await ctx.send(embed=embed)
         return
 
     # Define the base cost for each model
     model_costs = {
-        'openai/gpt-4o-mini': 10,  # lower-cost model
-        'openai/gpt-4o': 20       # higher-cost model
+        'openai/gpt-3.5-turbo': 1,  # lowest-cost model
+        'openai/gpt-4o-mini': 10,  # eco-cost model
+        'openai/gpt-4o': 20       # highest-cost model
     }
 
     # Estimate the maximum possible cost
@@ -729,16 +768,36 @@ async def ai_command(ctx, *, message: str = None):
 # Event handler to give users points for each message they send
 @bot.event
 async def on_message(message):
-  if message.author.bot:
-    return  # Ignore messages from bots
-  print(message)
+    if message.author.bot:
+        return  # Ignore messages from bots
 
-  user_id = str(message.author.id)
-  print(f"User ID: {user_id}")  # Debug print
-  print(f"Current points: {check_points(user_id)}")  # Debug print
-  update_points(user_id, 0.0625)  # Give user 0.0625 points for each message
-  print(f"Updated points: {check_points(user_id)}")  # Debug print
-  await bot.process_commands(message)  # Ensure other commands are processed
+    # Points system
+    user_id = str(message.author.id)
+    print(f"User ID: {user_id}")  # Debug print
+    print(f"Current points: {check_points(user_id)}")  # Debug print
+    update_points(user_id, 0.0625)  # Give user 0.0625 points for each message
+    print(f"Updated points: {check_points(user_id)}")  # Debug print
+
+    # Autoslowmode
+    channel_id = message.channel.id
+    if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
+        settings = slowmode_settings[channel_id]
+
+        # Increment the message count and check if it exceeds the mpm threshold
+        settings["message_count"] += 1
+        elapsed_time = time.time() - settings["last_check"]
+
+        if elapsed_time >= 30:  # Half a minute has passed
+            if settings["message_count"] > settings["mpm"]:
+                # Apply slow mode to the channel
+                await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
+                await message.channel.send(f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity.")
+           
+            # Reset for the next interval
+            settings["message_count"] = 0
+            settings["last_check"] = time.time()
+
+    await bot.process_commands(message)  # Ensure other commands are processed
 
 
 http_explanation = """
@@ -1115,32 +1174,36 @@ async def role(ctx):
 # Role creation
 @role.command(help="Create a custom cosmetic role. Maximum 3 slots.")
 async def create(ctx, role_name: str, role_color: str):
-    user = ctx.author
-    guild = ctx.guild
-    slots = load_slots()
-
-    # Check if the user already has their slots filled
-    user_slots = slots.get(str(user.id), [])
-    if len(user_slots) >= MAX_SLOTS:
-        await ctx.send(f"{user.mention}, you already have {MAX_SLOTS} custom roles. You need to delete or replace one to create a new one.")
-        return
-
-    # Validate hex color
     try:
-        role_color = discord.Color(int(role_color.lstrip("#"), 16))
-    except ValueError:
-        await ctx.send("Invalid hex color format. Please provide a valid hex color code.")
-        return
+        user = ctx.author
+        guild = ctx.guild
+        slots = load_slots()
 
-    # Create the new role in the server
-    new_role = await guild.create_role(name=role_name, color=role_color)
-    
-    # Save the role ID to the user's slot
-    user_slots.append(new_role.id)
-    slots[str(user.id)] = user_slots
-    save_slots(slots)
+        # Check if the user already has their slots filled
+        user_slots = slots.get(str(user.id), [])
+        if len(user_slots) >= MAX_SLOTS:
+            await ctx.send(f"{user.mention}, you already have {MAX_SLOTS} custom roles. You need to delete or replace one to create a new one.")
+            return
 
-    await ctx.send(f"{user.mention}, the role `{role_name}` has been created with color `{role_color}`.")
+        # Validate hex color
+        try:
+            role_color = discord.Color(int(role_color.lstrip("#"), 16))
+        except ValueError:
+            await ctx.send("Invalid hex color format. Please provide a valid hex color code.")
+            return
+
+        # Create the new role in the server
+        new_role = await guild.create_role(name=role_name, color=role_color)
+        
+        # Save the role ID to the user's slot
+        user_slots.append(new_role.id)
+        slots[str(user.id)] = user_slots
+        save_slots(slots)
+
+        await ctx.send(f"{user.mention}, the role `{role_name}` has been created with color `{role_color}`.")
+    except Exception as e:
+        print(f"Error in role create command: {e}")
+        await ctx.send("An error occurred while creating the role.")
 
 # Role deletion
 @role.command(help="Delete one of your custom cosmetic roles.")
