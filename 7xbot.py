@@ -376,16 +376,13 @@ async def cancel(ctx, ecancel: bool = False):
 
 @bot.command(name="help")
 async def help_command(ctx):
-  embed = discord.Embed(title="7x Command List",
-                        description="List of available commands:",
-                        color=0x00ff00)
+  print("Help command called")  # Debug print
+  help_message = "List of available commands:\n"
   for command in bot.commands:
-    command_usage = f"7/{command.name} {' ' + command.usage if command.usage else ''}"  # Correct command usage display
-    embed.add_field(name=command_usage,
-                    value=command.help or "No description provided.",
-                    inline=False)
-  await ctx.send(embed=embed)
-
+    command_usage = f"7/{command.name} {' ' + command.usage if command.usage else ''}".strip()  # Correct command usage display
+    help_message += f"{command_usage}: {command.help or 'No description provided.'}\n"
+  await ctx.send(help_message)
+  print("Help message sent")  # Debug print
 
 @bot.event
 async def on_command_error(ctx, error):
