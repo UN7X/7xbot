@@ -394,6 +394,10 @@ async def help_command(ctx):
                 command_usage = getattr(command, 'usage', 'No usage provided.')
                 command_help = getattr(command, 'help', 'No description provided.')
                 
+                # Ensure command_help is a string
+                if asyncio.iscoroutine(command_help):
+                    command_help = await command_help
+                
                 # Truncate help text if too long
                 if len(command_help) > 1024:
                     command_help = command_help[:1021] + "..."
@@ -651,6 +655,9 @@ async def process_query(messages, image_path=None):
     messages.append({"role": "system", "content": f"data:image/jpeg;base64,{encoded_image}"})
 
   try:
+    strong_model='openai/gpt-4o'  # Choose your strong model
+    weak_model='openai/gpt-4o-mini'  # Choose your weak model
+
     result, session_id, provider = client.chat.completions.create(
       messages=messages,
       model=['openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/gpt-3.5-turbo'],
@@ -699,7 +706,7 @@ If an image is sent, it will automatically use an appropriate model that support
 """
 
 # Modify the ai_command function to check points before calling the LLM
-@bot.command(name="ai", usage="7/ai <message> <optional flag: -s>", aliases=["ai_bot"], help=ai_explanation)
+@bot.command(name="ai", usage="7/ai <message> <optional flag: -s>", aliases=["ai_bot"], help="Interacts with an advanced AI to simulate conversation or answer queries.")
 async def ai_command(ctx, *, message: str = None):
     if message is None or message.strip() == "":
         await ctx.send("Please provide a message. For help, type: `7/ai help`")
