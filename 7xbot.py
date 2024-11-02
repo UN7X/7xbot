@@ -75,7 +75,7 @@ async def beta(ctx, option: str = None):
     elif option == "tester":
         await ctx.invoke(bot.get_command('beta tester'))
 
-@bot.group(name="tester", invoke_without_command=True)
+@bot.group(name="tester", invoke_without_command=True, help="Beta tester management commands.")
 @commands.is_owner()
 async def beta_tester(ctx):
     if ctx.invoked_subcommand is None:
@@ -374,49 +374,29 @@ async def cancel(ctx, ecancel: bool = False):
   await ctx.send(f"ecancel set to {ecancel}")
 
 
-@bot.command(name="help")
-async def help_command(ctx):
-    print("Help command called")
-    try:
-        # Group commands into categories (max 10 commands per embed)
-        commands_list = list(bot.commands)
-        chunks = [commands_list[i:i + 10] for i in range(0, len(commands_list), 10)]
-        
-        for i, chunk in enumerate(chunks):
+@bot.command(name="man")
+async def man_command(ctx, *, arg: Optional[str] = None):
+    if arg is None or arg.strip() in ['--list', '--l']:
+        # List all command names
+        command_names = [f"`{command.name}`" for command in bot.commands]
+        command_list = ', '.join(command_names)
+        await ctx.send(f"Available commands:\n{command_list}")
+    else:
+        command = bot.get_command(arg)
+        if command:
+            # Get command explanation
+            explanation = command.help
+            if not explanation or explanation == "":
+                # Create a default explanation if none exists
+                explanation = f"The `{command.name}` command does not have a detailed explanation yet."
             embed = discord.Embed(
-                title=f"7x Command List (Page {i+1}/{len(chunks)})",
-                description="List of available commands:",
+                title=f"Manual Entry for `{command.name}`",
+                description=explanation,
                 color=0x00ff00
             )
-            
-            for command in chunk:
-                # Safely get command attributes
-                command_usage = getattr(command, 'usage', 'No usage provided.')
-                command_help = getattr(command, 'help', 'No description provided.')
-                
-                # Ensure command_help is a string
-                if asyncio.iscoroutine(command_help):
-                    command_help = await command_help
-                
-                # Truncate help text if too long
-                if len(command_help) > 1024:
-                    command_help = command_help[:1021] + "..."
-                
-                # Add field to embed
-                embed.add_field(
-                    name=f"7/{command.name} {command_usage}".strip(),
-                    value=command_help,
-                    inline=False
-                )
-            
-            # Send the embed
             await ctx.send(embed=embed)
-        
-        print("Help message sent")
-    except Exception as e:
-        print(f"Error in help command: {e}")
-        await ctx.send("An error occurred while displaying help.")
-
+        else:
+            await ctx.send(f"No command named '{arg}' found.")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -752,7 +732,7 @@ async def ai_command(ctx, *, message: str = None):
         else:
             conversation = get_messages(guild_id, user_id)
             messages = conversation + [{"role": "user", "content": message_content}]
-        
+
         # Process the query and get the response and model used
         response, model_used = await process_query(messages)
 
@@ -785,12 +765,14 @@ async def on_message(message):
     update_points(user_id, 0.0625)  # Give user 0.0625 points for each message
     print(f"Updated points: {check_points(user_id)}")  # Debug print
 
-    # Autoslowmode
+    # Auto Slow Mode
     channel_id = message.channel.id
+
+    # Check if auto-slowmode is enabled in this channel
     if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
         settings = slowmode_settings[channel_id]
 
-        # Increment the message count and check if it exceeds the mpm threshold
+        # Increment the message count
         settings["message_count"] += 1
         elapsed_time = time.time() - settings["last_check"]
 
@@ -798,13 +780,16 @@ async def on_message(message):
             if settings["message_count"] > settings["mpm"]:
                 # Apply slow mode to the channel
                 await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
-                await message.channel.send(f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity.")
+                await message.channel.send(
+                    f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity."
+                )
            
             # Reset for the next interval
             settings["message_count"] = 0
             settings["last_check"] = time.time()
 
-    await bot.process_commands(message)  # Ensure other commands are processed
+    # Process commands
+    await bot.process_commands(message)
 
 
 http_explanation = """
@@ -1094,7 +1079,7 @@ async def on_message(message):
                 await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
                 await message.channel.send(f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity.")
            
-            # Reset for the next minute
+            # Reset for the next interval
             settings["message_count"] = 0
             settings["last_check"] = time.time()
 
