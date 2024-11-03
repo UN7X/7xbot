@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import traceback
 import time
 import os
 import requests
@@ -376,7 +377,9 @@ async def cancel(ctx, ecancel: bool = False):
 
 @bot.command(name="man")
 async def man_command(ctx, *, arg: Optional[str] = None):
-    if arg is None or arg.strip() in ['--list', '--l']:
+    if arg is None or arg.strip() == "":
+        await ctx.send("Please provide a command name to get the manual entry.") 
+    elif arg.strip() in ['--list', '--l']:
         # List all command names
         command_names = [f"`{command.name}`" for command in bot.commands]
         command_list = ', '.join(command_names)
@@ -384,19 +387,20 @@ async def man_command(ctx, *, arg: Optional[str] = None):
     else:
         command = bot.get_command(arg)
         if command:
-            # Get command explanation
-            explanation = command.help
-            if not explanation or explanation == "":
-                # Create a default explanation if none exists
-                explanation = f"The `{command.name}` command does not have a detailed explanation yet."
+            # Get command usage
+            usage_text = command.usage
+            if not usage_text or usage_text == "":
+                # Provide a default message if usage is not set
+                usage_text = f"No detailed usage information available for `{command.name}`."
             embed = discord.Embed(
                 title=f"Manual Entry for `{command.name}`",
-                description=explanation,
+                description=usage_text,
                 color=0x00ff00
             )
             await ctx.send(embed=embed)
         else:
             await ctx.send(f"No command named '{arg}' found.")
+
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -423,7 +427,7 @@ if 7x can send a message in that channel.
 """
 
 
-@bot.command(name='TC',
+@bot.command(name='tc',
              ignore_extra=False,
              help="This command tests if 7x can send a message in a channel.",
              usage="7/tc")
@@ -1150,7 +1154,11 @@ MAX_SLOTS = 3
 def load_slots():
     if os.path.exists(SLOTS_FILE):
         with open(SLOTS_FILE, 'r') as f:
-            return json.load(f)
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                # The JSON file is empty or invalid; return an empty dict
+                return {}
     return {}
 
 # Save slots data to file
@@ -1177,24 +1185,56 @@ async def create(ctx, role_name: str, role_color: str):
             await ctx.send(f"{user.mention}, you already have {MAX_SLOTS} custom roles. You need to delete or replace one to create a new one.")
             return
 
+        # Sanitize role name
+        role_name = role_name.strip('"')[:100]  # Limit to 100 characters
+
         # Validate hex color
+        if not role_color.startswith("#") or len(role_color) != 7:
+            await ctx.send("Invalid hex color format. Please provide a valid hex color code in the format #RRGGBB.")
+            return
+
         try:
             role_color = discord.Color(int(role_color.lstrip("#"), 16))
         except ValueError:
-            await ctx.send("Invalid hex color format. Please provide a valid hex color code.")
+            await ctx.send("Invalid hex color code. Please provide a valid hex color in the format #RRGGBB.")
+            return
+
+        # Check if a role with the same name already exists
+        existing_role = discord.utils.get(guild.roles, name=role_name)
+        if existing_role:
+            await ctx.send(f"{user.mention}, the role `{role_name}` already exists.")
             return
 
         # Create the new role in the server
-        new_role = await guild.create_role(name=role_name, color=role_color)
-        
+        try:
+            new_role = await guild.create_role(name=role_name, color=role_color)
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to create roles.")
+            return
+        except discord.HTTPException as e:
+            await ctx.send(f"Failed to create role: {e}")
+            return
+
+        # Assign the new role to the user
+        try:
+            await user.add_roles(new_role)
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to assign roles.")
+            return
+        except discord.HTTPException as e:
+            await ctx.send(f"Failed to assign role: {e}")
+            return
+
         # Save the role ID to the user's slot
         user_slots.append(new_role.id)
         slots[str(user.id)] = user_slots
         save_slots(slots)
 
-        await ctx.send(f"{user.mention}, the role `{role_name}` has been created with color `{role_color}`.")
+        await ctx.send(f"{user.mention}, the role `{role_name}` has been created with color `{role_color}` and assigned to you.")
     except Exception as e:
         print(f"Error in role create command: {e}")
+        import traceback
+        traceback.print_exc()
         await ctx.send("An error occurred while creating the role.")
 
 # Role deletion
@@ -1240,13 +1280,16 @@ async def list(ctx):
     embed.set_footer(text=f"Slots used: {len(user_slots)}/{MAX_SLOTS}")
     await ctx.send(embed=embed)
 
-# Ensure we catch role deletions and remove them from users' slots
 @bot.event
 async def on_guild_role_delete(role):
     slots = load_slots()
 
-    # Iterate over all users and remove the role from their slots if it exists
-    for user_id, user_roles in slots.items():
+    # Create a list of user IDs to iterate over
+    user_ids = list(slots.keys())
+
+    # Iterate over the list of user IDs
+    for user_id in user_ids:
+        user_roles = slots[user_id]
         if role.id in user_roles:
             user_roles.remove(role.id)
             if len(user_roles) == 0:
