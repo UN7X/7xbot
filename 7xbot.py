@@ -825,7 +825,7 @@ Deletes messages or entire channels based on flags.
 
 @bot.command(help="Deletes messages or entire channels, or transfers messages.",
              usage="7/http -rm / -rmc / -trf / -num")
-@commands.has_permissions(manage_guild=True)  # Changed to manage server permission
+@commands.is_owner()
 async def http(ctx, *args):
   if not args:
     await ctx.send("Usage: `7/http help` for detailed info.")
