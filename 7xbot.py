@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
 import asyncio
 import base64
@@ -14,10 +14,11 @@ from typing import Optional
 from dotenv import load_dotenv
 import discord
 from discord.channel import TextChannel
-import openai
 from discord.ext import commands
 from discord.ext.commands import MissingRequiredArgument, has_any_role
 from notdiamond import NotDiamond
+
+from datetime import datetime, timezone
 
 load_dotenv()
 
@@ -47,10 +48,13 @@ status_queue = []
 new_status = f"{days_until_christmas()} Days until Christmas!"
 status_hold = False
 my_secret = os.getenv('BOT_KEY')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 ND_API_KEY = os.getenv('NOTDIAMOND_API_KEY')
-openai.api_key = OPENAI_API_KEY
 fallback_model = "gpt-3.5-turbo-1106"
+
+from g4f.client import Client
+
+client = Client()
+
 def get_build_id():
   return "v1.9"
 os.system('cls' if os.name == 'nt' else 'clear')
@@ -275,13 +279,13 @@ strike_roles = [
 async def warn(ctx, member: discord.Member, *, reason: str = "No reason provided"):
     guild = ctx.guild
     current_role = None
-    
+
     for role in member.roles:
         if role.name in strike_roles:
             current_role = role
             break
 
-  
+
     if current_role is None:
         next_role = discord.utils.get(guild.roles, name="Warning 1")
     else:
@@ -352,7 +356,7 @@ async def lockdown(ctx, action: str):
             await invite.delete()
 
         await ctx.send("Lockdown initiated. All invites have been paused, and slow mode is set to 10 seconds for all channels.")
-    
+
     elif action.lower() == "deactivate":
         for channel in guild.text_channels:
             await channel.edit(slowmode_delay=0)
@@ -414,7 +418,7 @@ async def man_command(ctx, *, arg: Optional[str] = None):
 
             usage_text = command.usage
             if not usage_text or usage_text == "":
-            
+
                 usage_text = f"No detailed usage information available for `{command.name}`."
             embed = discord.Embed(
                 title=f"Manual Entry for `{command.name}`",
@@ -556,7 +560,7 @@ def get_messages(guild_id, user_id):
 
 
 
-client = NotDiamond()
+ndclient = NotDiamond()
 
 def encode_image(image_path):
   with open(image_path, "rb") as image_file:
@@ -715,10 +719,10 @@ async def ai_command(ctx, *, message: str = None):
     guild_id = str(ctx.guild.id)
     standalone = '-s' in message
     message_content = message.replace('-s', '').strip()
-    
+
     if message_content.lower() == "help":
         chunks = [ai_explanation[i:i + 1024] for i in range(0, len(ai_explanation), 1024)]
-        
+
         for i, chunk in enumerate(chunks):
             embed = discord.Embed(
                 title=f"AI Command Help (Part {i+1}/{len(chunks)})",
@@ -797,7 +801,7 @@ async def on_message(message):
                 await message.channel.send(
                     f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity."
                 )
-           
+
 
             settings["message_count"] = 0
             settings["last_check"] = time.time()
@@ -833,7 +837,6 @@ Deletes messages or entire channels based on flags.
 - `-trf` is useful for archiving messages from one channel to another.
 - The `-num` flag can be used with both `-trf` and `-rmc`.
 """
-
 @bot.command(help="Deletes messages or entire channels, or transfers messages.",
              usage="7/http -rm / -rmc / -trf / -num")
 @commands.is_owner()
@@ -881,6 +884,9 @@ async def http(ctx, *args):
 
     if "-rm" in args or "-rmc" in args or "-rmc.trf" in args:
       await channel.delete(reason="7/http command with -rm, -rmc or -rmc.trf flag")
+  if "-ai" in args or "-regex" in args:
+        await handle_scan_and_delete(ctx, args)
+        return
 
   if "-all" in args:
     countdown_message = await ctx.send(
@@ -929,6 +935,220 @@ async def http(ctx, *args):
     except (ValueError, IndexError):
       await ctx.send("Invalid usage, please specify a valid number of messages.")
     return
+
+async def handle_scan_and_delete(ctx, args):
+    try:
+        if "-ai" in args and "-regex" in args:
+            await ctx.send("❌ Cannot use both -ai and -regex flags together.")
+            return
+
+        if "-ai" in args:
+            ai_index = args.index("-ai")
+            if ai_index + 2 >= len(args):
+                await ctx.send("❌ Missing parameters for -ai flag. Usage: `-ai \"query\" limit`")
+                return
+            query = args[ai_index + 1]
+            try:
+                limit = min(int(args[ai_index + 2]), 200)
+            except ValueError:
+                await ctx.send("❌ Invalid limit value for -ai flag")
+                return
+
+            # Fetch messages
+            messages = []
+            async for msg in ctx.channel.history(limit=limit, before=ctx.message):
+                messages.append(msg)
+            messages.reverse()  # Oldest first for context
+
+            # Process with AI
+            flagged_messages = await ai_scan_messages(query, messages)
+
+        elif "-regex" in args:
+            regex_index = args.index("-regex")
+            if regex_index + 2 >= len(args):
+                await ctx.send("❌ Missing parameters for -regex flag. Usage: `-regex pattern limit`")
+                return
+            pattern = args[regex_index + 1]
+            try:
+                limit = min(int(args[regex_index + 2]), 200)
+            except ValueError:
+                await ctx.send("❌ Invalid limit value for -regex flag")
+                return
+
+            # Fetch messages
+            messages = []
+            async for msg in ctx.channel.history(limit=limit, before=ctx.message):
+                messages.append(msg)
+
+            # Process with Regex
+            try:
+                regex = re.compile(pattern)
+            except re.error:
+                await ctx.send("❌ Invalid regular expression pattern")
+                return
+
+            flagged_messages = [msg for msg in messages if regex.search(msg.content)]
+
+        else:
+            await ctx.send("❌ Missing -ai or -regex flag")
+            return
+
+        if not flagged_messages:
+            await ctx.send("✅ No messages found matching the criteria.")
+            return
+
+        # User review process
+        await review_and_confirm(ctx, flagged_messages)
+
+    except Exception as e:
+        await ctx.send(f"❌ An error occurred: {str(e)}")
+        raise e
+
+async def ai_scan_messages(query, messages):
+      # Make sure this variable is defined
+
+    # Prepare messages for AI analysis
+    messages_text = "\n".join(
+        [f"{i+1}. [{msg.author.display_name}] {msg.content}" 
+         for i, msg in enumerate(messages)]
+    )
+
+    prompt = f"""Analyze these messages for: {query}
+    
+Messages:
+{messages_text}
+
+Return a comma-separated list of message numbers that should be deleted. 
+Consider message content, context, and any patterns of inappropriate content."""
+
+    try:
+        # ayai 76055
+        response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are a content moderation assistant. Analyze messages and return numbers of messages to delete."},
+            {"role": "user", "content": prompt}
+        ],
+        web_search=False
+        )
+        # Parse AI response
+        numbers = []
+        for part in response.choices[0].message.content.split(','):
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                numbers.extend(range(start, end+1))
+            else:
+                numbers.append(int(part.strip()))
+
+        # Convert to 0-based indices and get messages
+        return [messages[i-1] for i in numbers if 0 < i <= len(messages)]
+
+    except Exception as e:
+        print(str(e))
+        raise RuntimeError(f"AI processing failed: {str(e)}")
+
+async def review_and_confirm(ctx, flagged_messages):
+    # Create review embed
+    embed = discord.Embed(
+        title="⚠️ Flagged Messages Review",
+        description=f"Found {len(flagged_messages)} potentially problematic messages",
+        color=0xff9900
+    )
+
+    # Add first 10 messages as examples
+    for idx, msg in enumerate(flagged_messages[:10], 1):
+        embed.add_field(
+            name=f"Message {idx} ({msg.author.display_name})",
+            value=f"{msg.content[:100]}..." if len(msg.content) > 100 else msg.content,
+            inline=False
+        )
+
+    if len(flagged_messages) > 10:
+        embed.set_footer(text=f"Plus {len(flagged_messages)-10} more messages...")
+
+    control_msg = await ctx.send(embed=embed)
+    await control_msg.add_reaction("✅")
+    await control_msg.add_reaction("❌")
+    await control_msg.add_reaction("✏️")
+
+    def check(reaction, user):
+        return user == ctx.author and str(reaction.emoji) in ["✅", "❌", "✏️"]
+
+    try:
+        reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check)
+
+        if str(reaction.emoji) == "✅":
+            await perform_deletion(ctx, flagged_messages)
+        elif str(reaction.emoji) == "❌":
+            await ctx.send("❌ Deletion cancelled.")
+        elif str(reaction.emoji) == "✏️":
+            await edit_flagged_messages(ctx, flagged_messages)
+
+    except asyncio.TimeoutError:
+        await ctx.send("⌛ Review timed out. Cancelling deletion.")
+
+async def edit_flagged_messages(ctx, flagged_messages):
+    embed = discord.Embed(
+        title="✏️ Edit Flagged Messages",
+        description="Reply with message numbers to remove (space-separated)\nExample: `1 3 5-7`",
+        color=0x00ffff
+    )
+    await ctx.send(embed=embed)
+
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    try:
+        msg = await bot.wait_for("message", timeout=60.0, check=check)
+        to_remove = set()
+        for part in msg.content.split():
+            if '-' in part:
+                start, end = map(int, part.split('-'))
+                to_remove.update(range(start, end+1))
+            else:
+                to_remove.add(int(part))
+
+        # Filter messages (using 1-based index)
+        new_flagged = [
+            msg for idx, msg in enumerate(flagged_messages, 1)
+            if idx not in to_remove
+        ]
+
+        await ctx.send(f"✅ Updated to {len(new_flagged)} messages")
+        await review_and_confirm(ctx, new_flagged)
+
+    except (ValueError, IndexError):
+        await ctx.send("❌ Invalid input format")
+    except asyncio.TimeoutError:
+        await ctx.send("⌛ Edit timed out. Cancelling.")
+
+async def perform_deletion(ctx, messages):
+    # Split into bulk deletable and individual messages
+    bulk_deletable = []
+    individual = []
+
+    for msg in messages:
+        if (datetime.now(timezone.utc) - msg.created_at).days < 14:
+            bulk_deletable.append(msg)
+        else:
+            individual.append(msg)
+
+    # Delete in bulk chunks of 100
+    try:
+        for chunk in [bulk_deletable[i:i+100] for i in range(0, len(bulk_deletable), 100)]:
+            await ctx.channel.delete_messages(chunk)
+    except Exception as e:
+        await ctx.send(f"⚠️ Partial error during bulk delete: {str(e)}")
+
+    # Delete older messages individually
+    for msg in individual:
+        try:
+            await msg.delete()
+        except Exception as e:
+            await ctx.send(f"⚠️ Couldn't delete message from {msg.author}: {str(e)}")
+
+    await ctx.send(f"✅ Successfully deleted {len(messages)} messages")
+
 
 @bot.command()
 @commands.is_owner()
@@ -1041,7 +1261,7 @@ async def logger(ctx, activation_length: str):
         async def on_message_delete(message):
             if logging_enabled:
                 try:
-        
+
                     log_entry = f"{message.author} ({message.author.id}) at {message.created_at} in {message.channel.name}: {message.content}\n"
                     log_file.write(log_entry)
                     log_file.flush()  
@@ -1087,7 +1307,7 @@ async def autoslowmode(ctx, mpm: int, slowmode_amount: int = 5):
     save_data(slowmode_settings[ctx.channel.id], "slowmode_settings.json")
 
     await ctx.send(f"Auto slowmode activated: {mpm} messages per 30 seconds. Slow mode will be set to {slowmode_amount} seconds.")
- 
+
 
     await reset_slowmode_if_inactive(ctx.channel)
 
@@ -1162,16 +1382,16 @@ async def sudo(ctx,
         "Usage: `7/sudo @user <message>` or `7/sudo help` for more info.")
   elif member and message:
     try:
-      
+
       await ctx.message.delete()
 
-     
+
       webhook = await ctx.channel.create_webhook(name="SudoWebhook")
 
-      
+
       avatar_url = member.avatar.url if member.avatar else None
 
- 
+
       await webhook.send(content=message,
                          username=member.display_name,
                          avatar_url=avatar_url)
@@ -1248,7 +1468,7 @@ async def create(ctx, role_name: str, role_color: str):
             await ctx.send(f"Failed to create role: {e}")
             return
 
- 
+
         try:
             await user.add_roles(new_role)
         except discord.Forbidden:
@@ -1301,7 +1521,7 @@ async def list(ctx):
     user_slots = slots.get(str(user.id), [])
 
     embed = discord.Embed(title=f"{user.display_name}'s Custom Roles", color=discord.Color.blue())
-    
+
     if user_slots:
         for role_id in user_slots:
             role = guild.get_role(role_id)
@@ -1319,7 +1539,7 @@ async def on_guild_role_delete(role):
 
     user_ids = list(slots.keys())
 
-  
+
     for user_id in user_ids:
         user_roles = slots[user_id]
         if role.id in user_roles:
