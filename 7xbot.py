@@ -203,37 +203,52 @@ async def echo(ctx, *args):
     await ctx.send(message)
     await ctx.message.delete()
 
+import io
+from contextlib import redirect_stdout
+
 @bot.command(name="eval")
 @commands.is_owner()
 async def eval_command(ctx, *, code: str):
+    # We'll capture print() output here
+    stdout = io.StringIO()
+
+    # Provide builtins, so print() etc. work
+    # Also pass in ctx or bot if you want them accessible
+    global_vars = {"__builtins__": __builtins__}
+    local_vars = {}
+
     try:
-        # Prepare the local namespace for exec()
-        local_vars = {}
-        global_vars = {}
-
-        # Execute the code
-        exec(code, global_vars, local_vars)
-
-        # Attempt to fetch the `result` variable or evaluate expressions
-        result = local_vars.get('result', None)
-
-        # Automatically evaluate the last expression if no `result` is defined
-        if result is None and "result" not in code:
-            # Attempt to execute the last line as an expression
-            try:
-                result = eval(code.strip().splitlines()[-1], global_vars, local_vars)
-            except Exception:
-                pass  # Ignore errors during evaluation of expressions
-
-        # Send the result or a default message
-        if result is not None:
-            await ctx.send(f"```{result}```")
-        else:
-            await ctx.send("Code executed successfully, but no `result` was defined.")
-
+        with redirect_stdout(stdout):
+            exec(code, global_vars, local_vars)
     except Exception as e:
-        # Handle and send any errors
-        await ctx.send(f"An error occurred:\n```{e}```")
+        return await ctx.send(f"**Exec error**:\n```py\n{e}\n```")
+
+    # Capture anything that was printed
+    output = stdout.getvalue()
+
+    # Check if a 'result' variable was set by the code
+    result = local_vars.get("result", None)
+
+    # If no 'result', try evaluating the last line (sometimes helpful)
+    if result is None and "result" not in code:
+        lines = code.strip().split("\n")
+        last_line = lines[-1].strip()
+        try:
+            result = eval(last_line, global_vars, local_vars)
+        except:
+            pass
+
+    # Build the response
+    response = ""
+    if output:
+        response += f"**Output**:\n```py\n{output}```\n"
+    if result is not None:
+        response += f"**Result**:\n```py\n{result}```"
+    if not response:
+        response = "Code executed successfully, but produced no output or result."
+
+    await ctx.send(response)
+
 
 @bot.command(name="shop")
 async def shop(ctx):
@@ -1419,6 +1434,14 @@ async def on_message(message):
 
   channel_id = message.channel.id
 
+  user_id = str(message.author.id)
+
+  print(f"User ID: {user_id}")  
+  print(f"Current points: {check_points(user_id)}")  
+  update_points(user_id, 0.0625)  
+  print(f"Updated points: {check_points(user_id)}")  
+
+
   # Check if this channel has autoslowmode enabled
   if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
     settings = slowmode_settings[channel_id]
@@ -1442,7 +1465,8 @@ async def on_message(message):
     save_data(slowmode_settings, "slowmode_settings.json")
 
   # Continue processing other commands
-  await bot.process_commands(message)
+  # await bot.process_commands(message) (this made every command run, run twice)
+  return
 
 @bot.command(help="Deactivate auto slow mode in the current channel.",
              usage="7/deactivateautoslowmode", aliases=["dasm"])
