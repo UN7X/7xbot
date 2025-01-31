@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import re
 import asyncio
 import base64
 import json
@@ -522,12 +523,15 @@ async def on_ready():
 
 
 
-def encode_image(image_path):
-  with open(image_path, "rb") as image_file:
-    print(f"Encoding image {image_path}")
-    return base64.b64encode(image_file.read()).decode("utf-8")
 
+
+# -------------------------
+# Database Load/Save
+# -------------------------
 def load_db(filename="database.json"):
+  """
+  Loads the JSON database from disk, returns an empty dict if it doesn't exist.
+  """
   try:
     if os.path.exists(filename):
       with open(filename, 'r') as f:
@@ -537,65 +541,323 @@ def load_db(filename="database.json"):
     with open(filename, 'w') as f:
       return {}
 
-
 def save_db(data, filename="database.json"):
-  with open(filename, 'w') as f:
-    json.dump(data, f, indent=4)
-
-db = load_db()
-
-
-def save_message(guild_id, user_id, message):
-  key = f"{guild_id}-{user_id}"
-  messages = db.get(key, [])
-  messages.append(message)
-  db[key] = messages
-  print(messages)
-
-
-def get_messages(guild_id, user_id):
-  key = f"{guild_id}-{user_id}"
-  print(f"Key: {key}")
-  return db.get(key, [])
-
-
-
-ndclient = NotDiamond()
-
-def encode_image(image_path):
-  with open(image_path, "rb") as image_file:
-    print(f"Encoding image {image_path}")
-    return base64.b64encode(image_file.read()).decode("utf-8")
-
-def load_db(filename="database.json"):
-  try:
-    if os.path.exists(filename):
-      with open(filename, 'r') as f:
-        return json.load(f) 
-    return {}
-  except FileNotFoundError:
-    with open(filename, 'w') as f:
-      return {}
-
-
-def save_db(data, filename="database.json"):
+  """
+  Saves the provided dict to the JSON database with indentation for readability.
+  """
   with open(filename, 'w') as f:
     json.dump(data, f, indent=4)
 
 db = load_db()
 
 def save_message(guild_id, user_id, message):
+  """
+  Appends a message dict to the conversation history for (guild_id, user_id).
+  """
   key = f"{guild_id}-{user_id}"
   messages = db.get(key, [])
   messages.append(message)
   db[key] = messages
-  save_db(db)  
-  print(messages)
+  save_db(db)
 
 def get_messages(guild_id, user_id):
+  """
+  Retrieves the conversation history for (guild_id, user_id).
+  """
   key = f"{guild_id}-{user_id}"
-  print(f"Key: {key}")
   return db.get(key, [])
+
+# -------------------------
+# AI Explanation / Help Text
+# -------------------------
+ai_explanation = (
+  "**Info:**\n"
+  "Interacts with an AI (model-specifiable) to simulate conversation or answer queries.\n"
+  "- Normal conversation maintains context for a more coherent interaction.\n"
+  "- Optional flag `-s` for a standalone query without context.\n"
+  "\n"
+  "**Usage:**\n"
+  "`7/ai \"<message>\" [-s] [-search] [-model <model>]`\n"
+  "\n"
+  "**Examples:**\n"
+  "`7/ai \"What is the capital of France?\"` (Contextual conversation)\n"
+  "`7/ai \"What is the capital of France?\" -s` (Standalone, without conversation history)\n"
+  "`7/ai \"What is the capital of France?\" -model gpt-4o` (Use the GPT-4o model)\n"
+  "`7/ai \"What is the capital of France?\" -search` (Enable web search if supported)\n"
+  "`7/ai \"What is the capital of France?\" -s -model gpt-4o -search` (Combine flags)\n"
+  "`7/ai models` (Displays a list of available models.)\n"
+  "\n"
+  "**Tips:**\n"
+  "- Use `-s` for quick queries when you don't need conversation context.\n"
+  "- The `-search` flag enables web search for GPT-based models, helping get more accurate info.\n"
+  "- The AI's response quality may vary based on the selected model.\n"
+)
+
+# A consolidated list of available models (remove duplicates)
+available_models = [
+  "gemini-1.5-pro",
+  "llama-3.3-70b",
+  "qwen-2.5-coder-32b",
+  "hermes-3",
+  "llama-3.2-90b",
+  "blackboxai",
+  "gpt-4",
+  "gpt-4o",
+  "gemini-1.5-flash",
+  "claude-3.5-sonnet",
+  "blackboxai-pro",
+  "llama-3.1-8b",
+  "llama-3.1-70b",
+  "llama-3-1-405b",
+  "mixtral-7b",
+  "deepseek-chat",
+  "dbrx-instruct",
+  "qwq-32b",
+  "hermes-2-dpo",
+  "deepseek-r1",
+  "gpt-4o-mini",
+  "claude-3-haiku",
+  "mixtral-8x7b",
+  "wizardlm-2-8x22b",
+  "wizardlm-2-7b",
+  "qwen-2.5-72b",
+  "nemotron-70b"
+]
+# Some might be duplicates, so let's ensure uniqueness
+available_models = list(set(available_models))
+available_models.sort()
+
+# Models that support web_search
+allowed_search_models = ["gpt-4", "gpt-4o", "gpt-4o-mini"]
+
+# -------------------------
+# Utility: Parsing Flags
+# -------------------------
+def parse_flags_and_content(raw_message: str):
+  """
+  Parses the user's raw message for flags and quoted content.
+  Returns: (message_content, standalone, search_enabled, selected_model).
+  """
+
+  # Quick check for 'help' or 'models' before doing complex parse
+  # (If the user literally typed 'help' or 'models' without quotes.)
+  command_lower = raw_message.strip().lower()
+  if command_lower == "help":
+    return ("HELP_COMMAND", False, False, None)
+  if command_lower == "models":
+    return ("MODELS_LIST", False, False, None)
+
+  # Standalone mode
+  standalone = "-s" in raw_message
+  # Web search flag
+  search_enabled = "-search" in raw_message
+  # Default model
+  selected_model = "gpt-4o"
+
+  # Remove the flags from the raw string; do it carefully so we don't kill partial text
+  # We'll handle the -model part separately.
+  def remove_flag(text, flag):
+    return re.sub(rf"\s*{flag}\b", "", text)
+
+  flags = ["-s", "-search"]
+  for flag in flags:
+    raw_message = remove_flag(raw_message, flag)
+
+  # Check for "-model <model>"
+  model_match = re.search(r"-model\s+(\S+)", raw_message)
+  if model_match:
+    model_candidate = model_match.group(1)
+    # Remove it from the raw message
+    raw_message = re.sub(rf"-model\s+{model_candidate}", "", raw_message).strip()
+    selected_model = model_candidate
+
+  # Now parse the quoted string
+  message_content_pattern = r'"([^"]+)"'
+  match = re.search(message_content_pattern, raw_message)
+  if match:
+    message_content = match.group(1).strip()
+  else:
+    # If there's no quoted text, check if user typed something like "help" or "models" in quotes
+    # or just no quotes at all. We'll treat it as an error for now.
+    message_content = ""
+
+  return (message_content, standalone, search_enabled, selected_model)
+
+# -------------------------
+# Context Truncation (Placeholder)
+# -------------------------
+def truncate_conversation(conversation, model="gpt-4o", max_tokens=4000):
+  """
+  If you'd like to implement token-based truncation, you can place your logic here
+  using tiktoken or a similar library. For now, it just returns the conversation unmodified.
+  """
+  # Example placeholder:
+  # total_tokens = count_tokens_in_messages(conversation, model)
+  # while total_tokens > max_tokens and len(conversation) > 2:
+  #   conversation.pop(0)  # remove oldest message
+  #   total_tokens = count_tokens_in_messages(conversation, model)
+  return conversation
+
+# -------------------------
+# Response Splitting
+# -------------------------
+def split_into_chunks(text, chunk_size=2000):
+  """
+  Splits a long string into chunks for Discord messages.
+  """
+  return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+# -------------------------
+# The Command
+# -------------------------
+@bot.command(name="ai", usage="7/ai <message> [-s] [-search] [-model <model>]", aliases=["ai_bot"])
+async def ai_command(ctx, *, message: str = None):
+  if not message or message.strip() == "":
+    await ctx.send("Please provide a message. For help, type: `7/ai help`.")
+    return
+
+  # Parse the flags and content
+  message_content, standalone, search_enabled, selected_model = parse_flags_and_content(message)
+
+  # If user asked for help (no quotes or "help")
+  if message_content == "HELP_COMMAND":
+    await send_help_embed(ctx)
+    return
+
+  # If user asked for model list
+  if message_content == "MODELS_LIST":
+    await send_models_list(ctx)
+    return
+
+  # If no quoted text found and it's not help/models
+  if not message_content:
+    await ctx.send("Please provide a message within quotes. For help, type: `7/ai help`.")
+    return
+
+  # Validate model
+  if selected_model not in available_models:
+    model_list_str = ", ".join(available_models) if available_models else "No models currently available."
+    await ctx.send(f"Invalid model: **{selected_model}**.\nAvailable models: {model_list_str}")
+    return
+
+  # Validate -search usage for GPT models only
+  if search_enabled and selected_model not in allowed_search_models:
+    await ctx.send(f"⚠️ The **{selected_model}** model does not support web search.")
+    # If you want to force it off but still continue:
+    # search_enabled = False
+    return
+
+  # Retrieve conversation or create a new one
+  user_id = str(ctx.author.id)
+  guild_id = str(ctx.guild.id)
+
+  if standalone:
+    conversation = [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": message_content}
+    ]
+  else:
+    existing_convo = get_messages(guild_id, user_id)
+    # Insert system message right before user's new query
+    conversation = existing_convo + [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": message_content}
+    ]
+
+  # Truncate conversation if needed (placeholder)
+  conversation = truncate_conversation(conversation, model=selected_model, max_tokens=4000)
+
+  # Show a "typing" indicator while generating the response
+  async with ctx.typing():
+    try:
+      print(f"AI Command: {message_content}")
+      print(f"Standalone: {standalone}")
+      print(f"Search Enabled: {search_enabled}")
+      print(f"Selected Model: {selected_model}")
+      # GPT4Free call (adjust to your actual library usage)
+      response = client.chat.completions.create(
+        model=selected_model,
+        messages=conversation,
+        web_search=search_enabled
+      )
+      ai_reply = response.choices[0].message.content
+
+      # Split the reply if it's too long for a single Discord message
+      parts = split_into_chunks(ai_reply, 2000)
+      for part in parts:
+        await ctx.send(part)
+
+      # If not standalone, save user/assistant messages to DB
+      if not standalone:
+        save_message(guild_id, user_id, {"role": "user", "content": message_content})
+        save_message(guild_id, user_id, {"role": "assistant", "content": ai_reply})
+
+    except Exception as e:
+      await ctx.send(f"An error occurred: {str(e)}")
+
+# -------------------------
+# Sending Help Embed
+# -------------------------
+async def send_help_embed(ctx):
+  """
+  Sends a help embed with usage details, flag descriptions, and examples.
+  Splits it up if needed.
+  """
+  embed = discord.Embed(title="AI Command Help", color=0x00ff00)
+  embed.add_field(name="Usage", value='`7/ai "<message>" [-s] [-search] [-model <model>]`', inline=False)
+  embed.add_field(
+    name="Flags",
+    value=(
+      "**-s**: Standalone (ignore conversation history)\n"
+      "**-search**: Enable web search (GPT-based models only)\n"
+      "**-model <model>**: Choose one of the available models\n"
+    ),
+    inline=False
+  )
+  embed.add_field(
+    name="Examples",
+    value=(
+      "`7/ai \"What is the capital of France?\"`\n"
+      "`7/ai \"What is the capital of France?\" -s`\n"
+      "`7/ai \"What is the capital of France?\" -model gpt-4o`\n"
+      "`7/ai \"What is the capital of France?\" -search`\n"
+      "`7/ai \"What is the capital of France?\" -s -model gpt-4o -search`\n"
+      "`7/ai models` (displays available models)\n"
+    ),
+    inline=False
+  )
+  embed.add_field(
+    name="Tips",
+    value=(
+      "• Use `-s` for quick queries without context.\n"
+      "• `-search` fetches fresh info from the web on GPT models.\n"
+      "• Model quality may vary.\n"
+    ),
+    inline=False
+  )
+  await ctx.send(embed=embed)
+
+# -------------------------
+# Sending Models List
+# -------------------------
+async def send_models_list(ctx):
+  """
+  Sends an embed listing all available models, with a note about which models
+  support web search.
+  """
+  embed = discord.Embed(title="Available Models", color=0x00ff00)
+  # Build a string listing each model. Mark the GPT-based models that allow search.
+  lines = []
+  for m in available_models:
+    if m in allowed_search_models:
+      lines.append(f"• **{m}** (web-search enabled)")
+    else:
+      lines.append(f"• {m}")
+
+  embed.description = "\n".join(lines)
+  embed.set_footer(text="Only GPT-based models support the -search flag.")
+  await ctx.send(embed=embed)
+
 
 def check_points(user_id):
   print("Checking points...")
@@ -649,127 +911,6 @@ def update_points(user_id, points):
   db[f"points_{user_id}"] = new_points
   save_db(db) 
   print("Updated points for user", user_id, "to", new_points)
-
-
-async def process_query(messages, image_path=None):
-  if image_path:
-    encoded_image = encode_image(image_path)
-    messages.append({"role": "system", "content": f"data:image/jpeg;base64,{encoded_image}"})
-
-  try:
-    strong_model='openai/gpt-4o'  
-    weak_model='openai/gpt-4o-mini'  
-
-    result, session_id, provider = client.chat.completions.create(
-      messages=messages,
-      model=['openai/gpt-4o', 'openai/gpt-4o-mini', 'openai/gpt-3.5-turbo'],
-      tradeoff="cost"
-    )
-    response_text = result.content
-    model_used = provider.model
-    print("Not Diamond session ID: ", session_id)
-    print("LLM called: ", model_used)
-    print("LLM output: ", response_text)
-  except Exception as e:
-    response_text = "An error occurred while processing your request."
-    model_used = "unknown"
-    print(f"Error in NotDiamond client: {e}")
-
-  return response_text, model_used
-
-ai_explanation = """
-***Info:***
-Interacts with an advanced AI to simulate conversation or answer queries. Costs points based on the complexity and model used.
-Your queries will be processed and sent to an appropriate model selected by NotDiamond.
-If an image is sent, it will automatically use an appropriate model that supports image inputs.
-- Normal conversation maintains context for a more coherent interaction.
-- Optional flag `-s` for a standalone query without context, which costs fewer points.
-
-**Usage:** 
-`7/ai "<message>"` (Engages in a contextual conversation. Costs more points based on the AI model used.)
-`7/ai "<message>" -s` (Engages in a standalone query without considering conversation history. Costs fewer points.)
-
-**Examples:**
-`7/ai "What is the capital of France?"` (Contextual conversation)
-`7/ai "What is the capital of France?" -s` (Standalone query)
-
-***Cost:***
-- **openai/gpt-4o-mini**: 10 points per use.
-- **openai/gpt-4o**: 20 points per use.
-- **Discount for '-s' flag**: 50% off the above prices.
-
-***Earning Points:***
-- You earn **0.0625 points** for each message you send in the server.
-
-***Tips:***
-- Use the `-s` flag for quick queries when you don't need the context of a conversation. It saves your points.
-- Ensure you have enough points before using the command. You can earn points by participating in the server and using other features.
-- The AI's response quality and understanding may vary based on the auto-selected model by the complexity of your query.
-"""
-
-
-@bot.command(name="ai", usage="7/ai <message> <optional flag: -s>", aliases=["ai_bot"], help="Interacts with an advanced AI to simulate conversation or answer queries.")
-async def ai_command(ctx, *, message: str = None):
-    if message is None or message.strip() == "":
-        await ctx.send("Please provide a message. For help, type: `7/ai help`")
-        return
-
-    print(message)
-    user_id = str(ctx.author.id)
-    guild_id = str(ctx.guild.id)
-    standalone = '-s' in message
-    message_content = message.replace('-s', '').strip()
-
-    if message_content.lower() == "help":
-        chunks = [ai_explanation[i:i + 1024] for i in range(0, len(ai_explanation), 1024)]
-
-        for i, chunk in enumerate(chunks):
-            embed = discord.Embed(
-                title=f"AI Command Help (Part {i+1}/{len(chunks)})",
-                description=chunk,
-                color=0x00ff00
-            )
-            await ctx.send(embed=embed)
-        return
-
-    model_costs = {
-        'openai/gpt-3.5-turbo': 1,  # lowest-cost model
-        'openai/gpt-4o-mini': 10,  # eco-cost model
-        'openai/gpt-4o': 20       # highest-cost model
-    }
-
-    # Estimate the maximum possible cost
-    max_cost = max(model_costs.values())
-    if standalone:
-        max_cost = int(max_cost * 0.5) 
-
-    user_points = check_points(user_id)
-
-    if user_points >= max_cost:
-        if standalone:
-            messages = [{"role": "user", "content": message_content}]
-        else:
-            conversation = get_messages(guild_id, user_id)
-            messages = conversation + [{"role": "user", "content": message_content}]
-
-        response, model_used = await process_query(messages)
-
-
-        cost = model_costs.get(model_used, 10)
-        if standalone:
-            cost = int(cost * 0.5)
-
-        update_points(user_id, -cost)  
-        await ctx.send(response)
-
-        if not standalone:
-            save_message(guild_id, user_id, {"role": "user", "content": message_content})
-            save_message(guild_id, user_id, {"role": "assistant", "content": response})
-    else:
-        await ctx.send(
-            f"You don't have enough points for this operation. It costs up to {max_cost} points, but you have {user_points}."
-        )
-
 
 @bot.event
 async def on_message(message):
