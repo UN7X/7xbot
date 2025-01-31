@@ -912,45 +912,6 @@ def update_points(user_id, points):
   save_db(db) 
   print("Updated points for user", user_id, "to", new_points)
 
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-
-    user_id = str(message.author.id)
-    print(f"User ID: {user_id}")  
-    print(f"Current points: {check_points(user_id)}")  
-    update_points(user_id, 0.0625)  
-    print(f"Updated points: {check_points(user_id)}")  
-
-
-    channel_id = message.channel.id
-
-
-    if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
-        settings = slowmode_settings[channel_id]
-
-
-        settings["message_count"] += 1
-        elapsed_time = time.time() - settings["last_check"]
-
-        if elapsed_time >= 30:  
-            if settings["message_count"] > settings["mpm"]:
-
-                await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
-                await message.channel.send(
-                    f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity."
-                )
-
-
-            settings["message_count"] = 0
-            settings["last_check"] = time.time()
-
-
-    await bot.process_commands(message)
-
-
 
 http_explanation = """
 ***Info:***
@@ -1373,47 +1334,6 @@ async def transfer_messages(ctx, source_channel: discord.TextChannel, target_cha
 
   await ctx.send(f"Messages successfully transferred from {source_channel.mention} to {target_channel.mention}!")
 
-@bot.command(help="Logs deleted messages for moderation purposes.",
-             usage="7/logger <activation length (-indf or -num)>")
-@commands.has_permissions(manage_guild=True)
-async def logger(ctx, activation_length: str):
-
-    logging_enabled = False
-
-
-    log_filename = f"{ctx.guild.name}_deleted_logs.txt"
-    with open(log_filename, "a") as log_file:
-
-        if activation_length.startswith("-indf"):
-            logging_enabled = True
-            print("Logger activated indefinitely.")
-        elif activation_length.startswith("-num"):
-            try:
-                minutes = int(activation_length[4:])
-                logging_enabled = True
-                print(f"Logger activated for {minutes} minutes.")
-                await asyncio.sleep(minutes * 60) 
-                logging_enabled = False
-                print("Logging stopped after the time limit.")
-            except ValueError:
-                await ctx.send("Invalid logging time. Please enter a valid number.")
-
-        @bot.event
-        async def on_message_delete(message):
-            if logging_enabled:
-                try:
-
-                    log_entry = f"{message.author} ({message.author.id}) at {message.created_at} in {message.channel.name}: {message.content}\n"
-                    log_file.write(log_entry)
-                    log_file.flush()  
-                except Exception as e:
-                    print(f"Error while logging message: {e}")
-
-
-    if not logging_enabled:
-        print(f"Logging stopped. Log saved to {log_filename}.")
-
-
 def save_data(data, filename="data.json"):
   with open(filename, 'w') as f:
     json.dump(data, f)
@@ -1430,63 +1350,116 @@ def load_data(filename="data.json"):
         return {}
 
 
-slowmode_settings = load_data("slowmode_settings.json")  
+def load_data(filename):
+  try:
+    with open(filename, "r") as f:
+      return json.load(f)
+  except FileNotFoundError:
+    return {}
+  except json.JSONDecodeError:
+    return {}
+
+def save_data(data, filename):
+  with open(filename, "w") as f:
+    json.dump(data, f, indent=2)
+
+# Load the entire slowmode settings dict once at startup
+slowmode_settings = load_data("slowmode_settings.json")
 print("Loaded slow mode settings:", slowmode_settings)
 
 @bot.command(help="Automatically enables slow mode when message traffic is high.",
              usage="7/autoslowmode <mpm> <slowmode amount>")
 @commands.has_permissions(manage_guild=True)
 async def autoslowmode(ctx, mpm: int, slowmode_amount: int = 5):
+  # Register/Update this channel's settings
+  slowmode_settings[ctx.channel.id] = {
+    "mpm": mpm,
+    "slowmode_amount": slowmode_amount,
+    "message_count": 0,
+    "last_check": time.time(),
+    "active": True
+  }
+  # Save the entire dictionary
+  save_data(slowmode_settings, "slowmode_settings.json")
 
-    slowmode_settings[ctx.channel.id] = {
-        "mpm": mpm,
-        "slowmode_amount": slowmode_amount,
-        "message_count": 0,
-        "last_check": time.time(),
-        "active": True
-    }
-    save_data(slowmode_settings[ctx.channel.id], "slowmode_settings.json")
+  await ctx.send(
+    f"Auto slowmode activated for this channel: "
+    f"{mpm} messages per 60 seconds.\n"
+    f"Slow mode will be set to {slowmode_amount} seconds on high traffic."
+  )
 
-    await ctx.send(f"Auto slowmode activated: {mpm} messages per 30 seconds. Slow mode will be set to {slowmode_amount} seconds.")
-
-
-    await reset_slowmode_if_inactive(ctx.channel)
-
+  # Start the inactivity loop for this channel
+  # If there's already a loop running for this channel, you may need to handle that.
+  bot.loop.create_task(reset_slowmode_if_inactive(ctx.channel))
 
 async def reset_slowmode_if_inactive(channel):
-    while slowmode_settings.get(channel.id, {}).get("active", False):
-        await asyncio.sleep(300)  # every 5 minutes
+  while slowmode_settings.get(channel.id, {}).get("active", False):
+    # Wait 5 minutes
+    await asyncio.sleep(300)
 
-        if slowmode_settings[channel.id]["message_count"] == 0:
-            await channel.edit(slowmode_delay=0)  
-            slowmode_settings[channel.id]["active"] = False
-            await channel.send("Slow mode disabled due to inactivity.")
-        else:
-            slowmode_settings[channel.id]["message_count"] = 0  
+    data = slowmode_settings.get(channel.id)
+    # If the channel’s data was removed or inactive, break
+    if not data or not data.get("active", False):
+      break
+
+    # If there's been no messages since the last cycle, disable slow mode
+    if data["message_count"] == 0:
+      await channel.edit(slowmode_delay=0)
+      data["active"] = False
+      await channel.send("Slow mode disabled due to inactivity.")
+
+    # Reset message count for the next 5-minute window
+    data["message_count"] = 0
+    save_data(slowmode_settings, "slowmode_settings.json")
 
 @bot.event
 async def on_message(message):
-    if message.author.bot:
-        return  
-    channel_id = message.channel.id
+  if message.author.bot:
+    return
 
-    if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
-        settings = slowmode_settings[channel_id]
+  channel_id = message.channel.id
 
+  # Check if this channel has autoslowmode enabled
+  if channel_id in slowmode_settings and slowmode_settings[channel_id]["active"]:
+    settings = slowmode_settings[channel_id]
+    settings["message_count"] += 1
+    elapsed_time = time.time() - settings["last_check"]
 
-        settings["message_count"] += 1
-        elapsed_time = time.time() - settings["last_check"]
+    # Check the traffic every 30 seconds
+    if elapsed_time >= 60:
+      if settings["message_count"] > settings["mpm"]:
+        # Set slow mode if message_count exceeds threshold
+        await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
+        await message.channel.send(
+          f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity."
+        )
 
-        if elapsed_time >= 30:
-            if settings["message_count"] > settings["mpm"]:
+      # Reset count and timestamp
+      settings["message_count"] = 0
+      settings["last_check"] = time.time()
 
-                await message.channel.edit(slowmode_delay=settings["slowmode_amount"])
-                await message.channel.send(f"Slow mode activated: {settings['slowmode_amount']} second slowmode due to high activity.")
+    # Save the entire dictionary after the update
+    save_data(slowmode_settings, "slowmode_settings.json")
 
-            settings["message_count"] = 0
-            settings["last_check"] = time.time()
+  # Continue processing other commands
+  await bot.process_commands(message)
 
-    await bot.process_commands(message)
+@bot.command(help="Deactivate auto slow mode in the current channel.",
+             usage="7/deactivateautoslowmode", aliases=["dasm"])
+@commands.has_permissions(manage_guild=True)
+async def deactivateautoslowmode(ctx):
+  channel_id = ctx.channel.id
+
+  # Make sure the channel actually has autoslowmode enabled
+  if channel_id in slowmode_settings and slowmode_settings[channel_id].get("active"):
+    slowmode_settings[channel_id]["active"] = False
+    slowmode_settings[channel_id]["message_count"] = 0
+    await ctx.channel.edit(slowmode_delay=0)  # Reset slow mode in Discord
+    save_data(slowmode_settings, "slowmode_settings.json")
+
+    await ctx.send("Auto slow mode has been **deactivated** for this channel.")
+  else:
+    await ctx.send("Auto slow mode is not active in this channel.")
 
 
 sudo_explanation = """
