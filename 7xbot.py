@@ -9,6 +9,9 @@ import time
 import os
 import requests
 import random
+import io
+import traceback
+import contextlib
 import string
 from datetime import datetime
 from typing import Optional
@@ -51,6 +54,8 @@ status_hold = False
 my_secret = os.getenv('BOT_KEY')
 ND_API_KEY = os.getenv('NOTDIAMOND_API_KEY')
 fallback_model = "gpt-3.5-turbo-1106"
+glasgow_block = True
+
 
 from g4f.client import Client
 
@@ -62,7 +67,7 @@ os.system('cls' if os.name == 'nt' else 'clear')
 
 tips = [
     "Did you know? Of course you didn't.", "Run 7/help for help",
-    "Hiya!", "Hello, world!", ":3", "I'm alive!", "You", "For 7/ commands", 
+    "Hiya!", "Hello, world!", ":3", "Netflix", "You", "For 7/ commands", 
 ]
 
 intents = discord.Intents.default()
@@ -72,6 +77,8 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("7/"),
                    intents=intents,
                    case_insensitive=True,
                    help_command=None)
+
+
 
 @bot.group(invoke_without_command=True)
 async def beta(ctx, option: str = None):
@@ -130,6 +137,103 @@ async def query_status(ctx, *, messages: str):
     status_queue.extend(messages_list)
 
     await ctx.send(f"Queued {len(messages_list)} statuses.")
+
+@bot.command(name="glasgow-block")
+async def ggb(ctx, state: bool):
+  global glasgow_block
+  if state == True or state == False:
+    glasgow_block = state
+    word = "Removed" if state == False else "Applied"
+    await ctx.send(f"Glasgow Block: {word}")
+  else:
+    ctx.send(f"""Error: Expected bool, recieved: "{state}" """)
+
+class MyBot(commands.Bot):
+  async def setup_hook(self):
+    # Schedule the terminal REPL task after the bot is ready.
+    time.sleep(15)
+    asyncio.create_task(terminal_repl())
+
+async def terminal_repl():
+  loop = asyncio.get_event_loop()
+  print("Terminal REPL started. Type your Python code below:")
+  while True:
+    # Read a line from the terminal without blocking the event loop.
+    code_str = await loop.run_in_executor(None, sys.stdin.readline)
+    code_str = code_str.strip()
+    if not code_str:
+      continue
+    try:
+      # Attempt to compile and evaluate as an expression.
+      code_obj = compile(code_str, "<stdin>", "eval")
+      result = eval(code_obj, globals())
+      if asyncio.iscoroutine(result):
+        result = await result
+      if result is not None:
+        print(result)
+    except SyntaxError:
+      # If eval fails (likely due to statements), try exec.
+      try:
+        code_obj = compile(code_str, "<stdin>", "exec")
+        with io.StringIO() as buffer:
+          with contextlib.redirect_stdout(buffer):
+            exec(code_obj, globals())
+          output = buffer.getvalue()
+        if not output:
+          output = "Code executed without output."
+        print(output)
+      except Exception:
+        print("Execution error:\n", traceback.format_exc())
+    except Exception:
+      print("Evaluation error:\n", traceback.format_exc())
+
+
+# Create a persistent global environment.
+# Including __builtins__ is important for exec to work correctly.
+global_env = {
+  "__builtins__": __builtins__,
+  "bot": None,
+  "discord": discord,
+  "commands": commands,
+  "asyncio": asyncio,
+}
+
+@bot.command(name="eval")
+@commands.is_owner()
+async def _eval(ctx, *, code: str):
+  # Update the persistent environment with current context and bot.
+  global_env["bot"] = bot
+  global_env["ctx"] = ctx
+
+  # If the code is wrapped in a code block, remove those lines.
+  if code.startswith("```") and code.endswith("```"):
+    code = "\n".join(code.split("\n")[1:-1])
+
+  try:
+    # First, try to compile as an expression.
+    compiled = compile(code, "<eval>", "eval")
+    result = eval(compiled, global_env)
+    if asyncio.iscoroutine(result):
+      result = await result
+    await ctx.send(f"Result: {result}")
+  except SyntaxError:
+    # If it’s not an expression (e.g. assignments), compile as exec.
+    try:
+      compiled = compile(code, "<exec>", "exec")
+      with io.StringIO() as buffer:
+        with contextlib.redirect_stdout(buffer):
+          exec(compiled, global_env)
+        output = buffer.getvalue()
+      if not output:
+        output = "Code executed without output."
+      await ctx.send(f"Output:\n```py\n{output}\n```")
+    except Exception:
+      tb = traceback.format_exc()
+      await ctx.send(f"Error during exec:\n```py\n{tb}\n```")
+  except Exception:
+    tb = traceback.format_exc()
+    await ctx.send(f"Error during eval:\n```py\n{tb}\n```")
+
 
 @bot.command(name="force-status")
 @commands.has_permissions(manage_guild=True)
@@ -202,52 +306,6 @@ async def echo(ctx, *args):
     message = " ".join(args)
     await ctx.send(message)
     await ctx.message.delete()
-
-import io
-from contextlib import redirect_stdout
-
-@bot.command(name="eval")
-@commands.is_owner()
-async def eval_command(ctx, *, code: str):
-    # We'll capture print() output here
-    stdout = io.StringIO()
-
-    # Provide builtins, so print() etc. work
-    # Also pass in ctx or bot if you want them accessible
-    global_vars = {"__builtins__": __builtins__}
-    local_vars = {}
-
-    try:
-        with redirect_stdout(stdout):
-            exec(code, global_vars, local_vars)
-    except Exception as e:
-        return await ctx.send(f"**Exec error**:\n```py\n{e}\n```")
-
-    # Capture anything that was printed
-    output = stdout.getvalue()
-
-    # Check if a 'result' variable was set by the code
-    result = local_vars.get("result", None)
-
-    # If no 'result', try evaluating the last line (sometimes helpful)
-    if result is None and "result" not in code:
-        lines = code.strip().split("\n")
-        last_line = lines[-1].strip()
-        try:
-            result = eval(last_line, global_vars, local_vars)
-        except:
-            pass
-
-    # Build the response
-    response = ""
-    if output:
-        response += f"**Output**:\n```py\n{output}```\n"
-    if result is not None:
-        response += f"**Result**:\n```py\n{result}```"
-    if not response:
-        response = "Code executed successfully, but produced no output or result."
-
-    await ctx.send(response)
 
 
 @bot.command(name="shop")
@@ -582,6 +640,36 @@ def get_messages(guild_id, user_id):
   key = f"{guild_id}-{user_id}"
   return db.get(key, [])
 
+
+# List of global variable names to exclude from debug output.
+SAFETY_BLACKLIST = ['my_secret', 'ND_API_KEY']
+
+@bot.command()
+async def debug(ctx, *args):
+  all_globals = globals()
+  debug_info = []
+
+  for name, value in all_globals.items():
+    # Skip private/system variables.
+    if name.startswith("__"):
+      continue
+    # Skip any variable that’s in our blacklist.
+    if name in SAFETY_BLACKLIST:
+      continue
+    if args and name not in args:
+      continue
+    debug_info.append(f"{name}: {value}")
+
+  output = "\n".join(debug_info)
+
+  # Check if the output is too long for a message.
+  if len(output) > 1900:
+    with io.StringIO(output) as file:
+      await ctx.send(file=discord.File(file, filename="debug.txt"))
+  else:
+    await ctx.send(f"```python\n{output}\n```")
+
+
 # -------------------------
 # AI Explanation / Help Text
 # -------------------------
@@ -727,8 +815,9 @@ def split_into_chunks(text, chunk_size=2000):
 # -------------------------
 @bot.command(name="ai", usage="7/ai <message> [-s] [-search] [-model <model>]", aliases=["ai_bot"])
 async def ai_command(ctx, *, message: str = None):
+  global glasgow_block
   if not message or message.strip() == "":
-    await ctx.send("Please provide a message. For help, type: `7/ai help`.")
+    await ctx.send("✦ | Please provide a message. For help, type: `7/ai help`.")
     return
 
   # Parse the flags and content
@@ -759,7 +848,8 @@ async def ai_command(ctx, *, message: str = None):
   if search_enabled and selected_model not in allowed_search_models:
     await ctx.send(f"⚠️ The **{selected_model}** model does not support web search.")
     # If you want to force it off but still continue:
-    # search_enabled = False
+    if glasgow_block:
+       search_enabled = False
     return
 
   # Retrieve conversation or create a new one
@@ -1143,7 +1233,7 @@ Consider message content, context, and any patterns of inappropriate content."""
         response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are a content moderation assistant. Analyze messages and return numbers of messages to delete."},
+            {"role": "system", "content": "You are a content moderation assistant. Analyze messages and ONLY return numbers of messages to delete."},
             {"role": "user", "content": prompt}
         ],
         web_search=False
@@ -1465,8 +1555,8 @@ async def on_message(message):
     save_data(slowmode_settings, "slowmode_settings.json")
 
   # Continue processing other commands
-  # await bot.process_commands(message) (this made every command run, run twice)
-  return
+  await bot.process_commands(message) # (this made every command run, run twice)
+  # return ok msybe i broke it
 
 @bot.command(help="Deactivate auto slow mode in the current channel.",
              usage="7/deactivateautoslowmode", aliases=["dasm"])
