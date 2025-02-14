@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import sys
 import re
 import asyncio
 import base64
@@ -20,7 +21,6 @@ import discord
 from discord.channel import TextChannel
 from discord.ext import commands
 from discord.ext.commands import MissingRequiredArgument, has_any_role
-from notdiamond import NotDiamond
 
 from datetime import datetime, timezone
 
@@ -73,80 +73,6 @@ tips = [
 intents = discord.Intents.default()
 intents.message_content = True 
 
-bot = commands.Bot(command_prefix=commands.when_mentioned_or("7/"),
-                   intents=intents,
-                   case_insensitive=True,
-                   help_command=None)
-
-
-
-@bot.group(invoke_without_command=True)
-async def beta(ctx, option: str = None):
-    if option is None:
-        await ctx.send("Please provide a valid option: tester, info")
-    elif option == "info":
-        await ctx.send(f"Build ID: {get_build_id()} | Uptime: {get_uptime()}")
-    elif option == "tester":
-        await ctx.invoke(bot.get_command('beta tester'))
-
-@bot.group(name="tester", invoke_without_command=True, help="Beta tester management commands.")
-@commands.is_owner()
-async def beta_tester(ctx):
-    if ctx.invoked_subcommand is None:
-        await ctx.send("Valid subcommands are: add, remove, list")
-@beta_tester.command(name="add")
-async def beta_tester_add(ctx, member: discord.Member = None):
-    if member is None:
-        await ctx.send("Please specify a member to add as a beta tester.")
-        return
-    role = discord.utils.get(ctx.guild.roles, name="7x Waitlist")
-    if role:
-        await member.add_roles(role)
-        await ctx.send(f"Added {member.mention} as a beta tester.")
-    else:
-        await ctx.send("Role '7x Waitlist' not found.")
-
-@beta_tester.command(name="remove")
-async def beta_tester_remove(ctx, member: discord.Member = None):
-    if member is None:
-        await ctx.send("Please specify a member to remove from beta testers.")
-        return
-    role = discord.utils.get(ctx.guild.roles, name="7x Waitlist")
-    if role in member.roles:
-        await member.remove_roles(role)
-        await ctx.send(f"Removed {member.mention} from beta testers.")
-    else:
-        await ctx.send(f"{member.mention} is not a tester.")
-
-@beta_tester.command(name="list")
-async def beta_tester_list(ctx):
-    role = discord.utils.get(ctx.guild.roles, name="7x Waitlist")
-    if role:
-        testers = [member.mention for member in role.members]
-        await ctx.send("Beta Testers: " + ", ".join(testers))
-    else:
-        await ctx.send("No beta testers found.")
-
-@bot.command(name="query-status")
-@commands.has_permissions(manage_guild=True)
-async def query_status(ctx, *, messages: str):
-    global status_queue
-
-    # Split the messages by quotes and filter out any empty strings
-    messages_list = [msg for msg in messages.split('"') if msg.strip()]
-    status_queue.extend(messages_list)
-
-    await ctx.send(f"Queued {len(messages_list)} statuses.")
-
-@bot.command(name="glasgow-block")
-async def ggb(ctx, state: bool):
-  global glasgow_block
-  if state == True or state == False:
-    glasgow_block = state
-    word = "Removed" if state == False else "Applied"
-    await ctx.send(f"Glasgow Block: {word}")
-  else:
-    ctx.send(f"""Error: Expected bool, recieved: "{state}" """)
 
 class MyBot(commands.Bot):
   async def setup_hook(self):
@@ -187,6 +113,80 @@ async def terminal_repl():
     except Exception:
       print("Evaluation error:\n", traceback.format_exc())
 
+bot = MyBot(command_prefix=commands.when_mentioned_or("7/"),
+                   intents=intents,
+                   case_insensitive=True,
+                   help_command=None)
+
+
+
+@bot.group(invoke_without_command=True)
+async def beta(ctx, option: str = None):
+    if option is None:
+        await ctx.send("Please provide a valid option: tester, info")
+    elif option == "info":
+        await ctx.send(f"Build ID: {get_build_id()} | Uptime: {get_uptime()}")
+    elif option == "tester":
+        await ctx.invoke(bot.get_command('beta tester'))
+
+@bot.group(name="tester", invoke_without_command=True, help="Beta tester management commands.")
+@commands.is_owner()
+async def beta_tester(ctx):
+    if ctx.invoked_subcommand is None:
+        await ctx.send("Valid subcommands are: add, remove, list")
+@beta_tester.command(name="add")
+async def beta_tester_add(ctx, member: discord.Member = None):
+    if member is None:
+        await ctx.send("Please specify a member to add as a beta tester.")
+        return
+    if role := discord.utils.get(ctx.guild.roles, name="7x Waitlist"):
+        await member.add_roles(role)
+        await ctx.send(f"Added {member.mention} as a beta tester.")
+    else:
+        await ctx.send("Role '7x Waitlist' not found.")
+
+@beta_tester.command(name="remove")
+async def beta_tester_remove(ctx, member: discord.Member = None):
+    if member is None:
+        await ctx.send("Please specify a member to remove from beta testers.")
+        return
+    role = discord.utils.get(ctx.guild.roles, name="7x Waitlist")
+    if role in member.roles:
+        await member.remove_roles(role)
+        await ctx.send(f"Removed {member.mention} from beta testers.")
+    else:
+        await ctx.send(f"{member.mention} is not a tester.")
+
+@beta_tester.command(name="list")
+async def beta_tester_list(ctx):
+    if role := discord.utils.get(ctx.guild.roles, name="7x Waitlist"):
+        testers = [member.mention for member in role.members]
+        await ctx.send("Beta Testers: " + ", ".join(testers))
+    else:
+        await ctx.send("No beta testers found.")
+
+@bot.command(name="query-status")
+@commands.has_permissions(manage_guild=True)
+async def query_status(ctx, *, messages: str):
+    global status_queue
+
+    # Split the messages by quotes and filter out any empty strings
+    messages_list = [msg for msg in messages.split('"') if msg.strip()]
+    status_queue.extend(messages_list)
+
+    await ctx.send(f"Queued {len(messages_list)} statuses.")
+
+@bot.command(name="glasgow-block")
+async def ggb(ctx, state: bool):
+    global glasgow_block
+    if state in {True, False}:
+        glasgow_block = state
+        word = "Applied" if state else "Removed"
+        await ctx.send(f"Glasgow Block: {word}")
+    else:
+        ctx.send(f"""Error: Expected bool, recieved: "{state}" """)
+
+
 
 # Create a persistent global environment.
 # Including __builtins__ is important for exec to work correctly.
@@ -201,42 +201,37 @@ global_env = {
 @bot.command(name="eval")
 @commands.is_owner()
 async def _eval(ctx, *, code: str):
-  # Update the persistent environment with current context and bot.
-  global_env["bot"] = bot
-  global_env["ctx"] = ctx
+    # Update the persistent environment with current context and bot.
+    global_env["bot"] = bot
+    global_env["ctx"] = ctx
 
-  # If the code is wrapped in a code block, remove those lines.
-  if code.startswith("```") and code.endswith("```"):
-    code = "\n".join(code.split("\n")[1:-1])
-
-  try:
-    # First, try to compile as an expression.
-    compiled = compile(code, "<eval>", "eval")
-    result = eval(compiled, global_env)
-    if asyncio.iscoroutine(result):
-      result = await result
-    await ctx.send(f"Result: {result}")
-  except SyntaxError:
-    # If it’s not an expression (e.g. assignments), compile as exec.
+      # If the code is wrapped in a code block, remove those markers.
+    if code.startswith("```") and code.endswith("```"):
+        lines = code.splitlines()
+        code = "\n".join(lines[1:-1]) if len(lines) >= 3 else code[3:-3].strip()
     try:
-      compiled = compile(code, "<exec>", "exec")
-      with io.StringIO() as buffer:
-        with contextlib.redirect_stdout(buffer):
-          exec(compiled, global_env)
-        output = buffer.getvalue()
-      if not output:
-        output = "Code executed without output."
-      await ctx.send(f"Output:\n```py\n{output}\n```")
+      # First, try to compile as an expression.
+      compiled = compile(code, "<eval>", "eval")
+      result = eval(compiled, global_env)
+      if asyncio.iscoroutine(result):
+        result = await result
+      await ctx.send(f"Result: {result}")
+    except SyntaxError:
+      try:
+        compiled = compile(code, "<exec>", "exec")
+        with io.StringIO() as buffer:
+          with contextlib.redirect_stdout(buffer):
+            exec(compiled, global_env)
+          output = buffer.getvalue()
+        if not output:
+          output = "Code executed without output."
+        await ctx.send(f"Output:\n```py\n{output}\n```")
+      except Exception:
+        tb = traceback.format_exc()
+        await ctx.send(f"Error during exec:\n```py\n{tb}\n```")
     except Exception:
       tb = traceback.format_exc()
-      await ctx.send(f"Error during exec:\n```py\n{tb}\n```")
-  except Exception:
-    tb = traceback.format_exc()
-    await ctx.send(f"Error during eval:\n```py\n{tb}\n```")
-
-
-@bot.command(name="force-status")
-@commands.has_permissions(manage_guild=True)
+      await ctx.send(f"Error during eval:\n```py\n{tb}\n```")
 async def force_status(ctx, *, status: str):
   global status_hold, temporary_status, temporary_status_time
 
@@ -260,32 +255,31 @@ async def force_status(ctx, *, status: str):
 
 
 async def change_status_task():
-  global status_hold, temporary_status, temporary_status_time, status_queue
-  last_status = None
+    global status_hold, temporary_status, temporary_status_time, status_queue
+    last_status = None
 
-  while True:
-    if temporary_status and (datetime.now() - temporary_status_time).seconds > 10:
-      temporary_status = None
+    while True:
+        if temporary_status and (datetime.now() - temporary_status_time).seconds > 10:
+          temporary_status = None
 
-    if status_hold:
-      await asyncio.sleep(10)
-    elif temporary_status:
-      await bot.change_presence(activity=discord.Activity(
-          type=discord.ActivityType.watching, name=temporary_status))
-      await asyncio.sleep(10)
-    elif status_queue:
-      next_status = status_queue.pop(0)
-      await bot.change_presence(activity=discord.Activity(
-          type=discord.ActivityType.watching, name=next_status))
-      await asyncio.sleep(10)
-    else:
-      new_status = random.choice(tips)
-      while new_status == last_status:
-        new_status = random.choice(tips)
-      await bot.change_presence(activity=discord.Activity(
-          type=discord.ActivityType.watching, name=new_status))
-      last_status = new_status
-      await asyncio.sleep(10)
+        if status_hold:
+            pass
+        elif temporary_status:
+            await bot.change_presence(activity=discord.Activity(
+                type=discord.ActivityType.watching, name=temporary_status))
+        elif status_queue:
+            next_status = status_queue.pop(0)
+            await bot.change_presence(activity=discord.Activity(
+                type=discord.ActivityType.watching, name=next_status))
+        else:
+            new_status = random.choice(tips)
+            while new_status == last_status:
+              new_status = random.choice(tips)
+            await bot.change_presence(activity=discord.Activity(
+                type=discord.ActivityType.watching, name=new_status))
+            last_status = new_status
+
+        await asyncio.sleep(10)
 
 
 shop_items = {
@@ -352,14 +346,9 @@ strike_roles = [
 @commands.has_permissions(manage_messages=True)
 async def warn(ctx, member: discord.Member, *, reason: str = "No reason provided"):
     guild = ctx.guild
-    current_role = None
-
-    for role in member.roles:
-        if role.name in strike_roles:
-            current_role = role
-            break
-
-
+    current_role = next(
+        (role for role in member.roles if role.name in strike_roles), None
+    )
     if current_role is None:
         next_role = discord.utils.get(guild.roles, name="Warning 1")
     else:
@@ -390,13 +379,9 @@ async def warn(ctx, member: discord.Member, *, reason: str = "No reason provided
 @commands.has_permissions(manage_messages=True)
 async def pardon(ctx, member: discord.Member):
     guild = ctx.guild
-    current_role = None
-
-    for role in member.roles:
-        if role.name in strike_roles:
-            current_role = role
-            break
-
+    current_role = next(
+        (role for role in member.roles if role.name in strike_roles), None
+    )
     if current_role is None:
         await ctx.send(f"{member.mention} has no warnings to pardon.")
         return
@@ -447,61 +432,51 @@ async def spamping(ctx,
                    member: Optional[discord.Member] = None,
                    *,
                    ping_count: Optional[int] = None):
-  await ctx.message.delete()
+    await ctx.message.delete()
 
-  if member is None:
-    await ctx.send("Please specify a user to ping.")
-    return
-
-  if ping_count is None:
-    ping_count = 5
-  if ping_count > 25:
-    ping_count = 25
-  for i in range(ping_count):
-    if ecancel is False:
-      await ctx.send(f"{member.mention} | {i+1}/{ping_count} Pings left")
-      await asyncio.sleep(1)
-    elif ecancel:
-      await ctx.send("Spam pings cancelled.")
+    if member is None:
+      await ctx.send("Please specify a user to ping.")
       return
+
+    if ping_count is None:
+      ping_count = 5
+    ping_count = min(ping_count, 25)
+    for i in range(ping_count):
+      if ecancel is False:
+        await ctx.send(f"{member.mention} | {i+1}/{ping_count} Pings left")
+        await asyncio.sleep(1)
+      elif ecancel:
+        await ctx.send("Spam pings cancelled.")
+        return
 
 
 @bot.command()
 async def cancel(ctx, ecancel: bool = False):
-  if ecancel is True:
-    ecancel = False
-  elif ecancel is False:
-    ecancel = True
-  else:
-    await ctx.send("Invalid option.")
-    return
-  await ctx.send(f"ecancel set to {ecancel}")
+    ecancel = not ecancel
+    await ctx.send(f"ecancel set to {ecancel}")
 
 
 @bot.command(name="man")
 async def man_command(ctx, *, arg: Optional[str] = None):
     if arg is None or arg.strip() == "":
-        await ctx.send("Please provide a command name to get the manual entry.") 
+        await ctx.send("Please provide a command name to get the manual entry.")
     elif arg.strip() in ['--list', '--l']:
         command_names = [f"`{command.name}`" for command in bot.commands]
         command_list = ', '.join(command_names)
         await ctx.send(f"Available commands:\n{command_list}")
+    elif command := bot.get_command(arg):
+        usage_text = command.usage
+        if not usage_text or usage_text == "":
+
+            usage_text = f"No detailed usage information available for `{command.name}`."
+        embed = discord.Embed(
+            title=f"Manual Entry for `{command.name}`",
+            description=usage_text,
+            color=0x00ff00
+        )
+        await ctx.send(embed=embed)
     else:
-        command = bot.get_command(arg)
-        if command:
-
-            usage_text = command.usage
-            if not usage_text or usage_text == "":
-
-                usage_text = f"No detailed usage information available for `{command.name}`."
-            embed = discord.Embed(
-                title=f"Manual Entry for `{command.name}`",
-                description=usage_text,
-                color=0x00ff00
-            )
-            await ctx.send(embed=embed)
-        else:
-            await ctx.send(f"No command named '{arg}' found.")
+        await ctx.send(f"No command named '{arg}' found.")
 
 
 @bot.event
@@ -534,13 +509,13 @@ if 7x can send a message in that channel.
              help="This command tests if 7x can send a message in a channel.",
              usage="7/tc")
 async def tc_command(ctx, *args):
-  if 'help' in args or len(args) > 0:
-    embed = discord.Embed(title="TC Command Help",
-                          description=tc_explanation,
-                          color=0x00ff00)
-    await ctx.send(embed=embed)
-  else:
-    await ctx.send("Success")
+    if 'help' in args or args:
+        embed = discord.Embed(title="TC Command Help",
+                              description=tc_explanation,
+                              color=0x00ff00)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("Success")
 
 @bot.command()
 async def derhop(ctx, *args):
@@ -726,10 +701,7 @@ available_models = [
   "qwen-2.5-72b",
   "nemotron-70b"
 ]
-# Some might be duplicates, so let's ensure uniqueness
-available_models = list(set(available_models))
-available_models.sort()
-
+available_models = sorted(set(available_models))
 # Models that support web_search
 allowed_search_models = ["gpt-4", "gpt-4o", "gpt-4o-mini"]
 
@@ -737,54 +709,48 @@ allowed_search_models = ["gpt-4", "gpt-4o", "gpt-4o-mini"]
 # Utility: Parsing Flags
 # -------------------------
 def parse_flags_and_content(raw_message: str):
-  """
+    """
   Parses the user's raw message for flags and quoted content.
   Returns: (message_content, standalone, search_enabled, selected_model).
   """
 
-  # Quick check for 'help' or 'models' before doing complex parse
-  # (If the user literally typed 'help' or 'models' without quotes.)
-  command_lower = raw_message.strip().lower()
-  if command_lower == "help":
-    return ("HELP_COMMAND", False, False, None)
-  if command_lower == "models":
-    return ("MODELS_LIST", False, False, None)
+    # Quick check for 'help' or 'models' before doing complex parse
+    # (If the user literally typed 'help' or 'models' without quotes.)
+    command_lower = raw_message.strip().lower()
+    if command_lower == "help":
+      return ("HELP_COMMAND", False, False, None)
+    if command_lower == "models":
+      return ("MODELS_LIST", False, False, None)
 
-  # Standalone mode
-  standalone = "-s" in raw_message
-  # Web search flag
-  search_enabled = "-search" in raw_message
-  # Default model
-  selected_model = "gpt-4o"
+    # Standalone mode
+    standalone = "-s" in raw_message
+    # Web search flag
+    search_enabled = "-search" in raw_message
+    # Default model
+    selected_model = "gpt-4o"
 
-  # Remove the flags from the raw string; do it carefully so we don't kill partial text
-  # We'll handle the -model part separately.
-  def remove_flag(text, flag):
-    return re.sub(rf"\s*{flag}\b", "", text)
+    # Remove the flags from the raw string; do it carefully so we don't kill partial text
+    # We'll handle the -model part separately.
+    def remove_flag(text, flag):
+      return re.sub(rf"\s*{flag}\b", "", text)
 
-  flags = ["-s", "-search"]
-  for flag in flags:
-    raw_message = remove_flag(raw_message, flag)
+    flags = ["-s", "-search"]
+    for flag in flags:
+      raw_message = remove_flag(raw_message, flag)
 
-  # Check for "-model <model>"
-  model_match = re.search(r"-model\s+(\S+)", raw_message)
-  if model_match:
-    model_candidate = model_match.group(1)
-    # Remove it from the raw message
-    raw_message = re.sub(rf"-model\s+{model_candidate}", "", raw_message).strip()
-    selected_model = model_candidate
+    # Check for "-model <model>"
+    model_match = re.search(r"-model\s+(\S+)", raw_message)
+    if model_match:
+        model_candidate = model_match[1]
+        # Remove it from the raw message
+        raw_message = re.sub(rf"-model\s+{model_candidate}", "", raw_message).strip()
+        selected_model = model_candidate
 
-  # Now parse the quoted string
-  message_content_pattern = r'"([^"]+)"'
-  match = re.search(message_content_pattern, raw_message)
-  if match:
-    message_content = match.group(1).strip()
-  else:
-    # If there's no quoted text, check if user typed something like "help" or "models" in quotes
-    # or just no quotes at all. We'll treat it as an error for now.
-    message_content = ""
-
-  return (message_content, standalone, search_enabled, selected_model)
+    # Now parse the quoted string
+    message_content_pattern = r'"([^"]+)"'
+    match = re.search(message_content_pattern, raw_message)
+    message_content = match[1].strip() if match else ""
+    return (message_content, standalone, search_enabled, selected_model)
 
 # -------------------------
 # Context Truncation (Placeholder)
@@ -815,90 +781,90 @@ def split_into_chunks(text, chunk_size=2000):
 # -------------------------
 @bot.command(name="ai", usage="7/ai <message> [-s] [-search] [-model <model>]", aliases=["ai_bot"])
 async def ai_command(ctx, *, message: str = None):
-  global glasgow_block
-  if not message or message.strip() == "":
-    await ctx.send("✦ | Please provide a message. For help, type: `7/ai help`.")
-    return
+    global glasgow_block
+    if not message or not message.strip():
+        await ctx.send("✦ | Please provide a message. For help, type: `7/ai help`.")
+        return
 
-  # Parse the flags and content
-  message_content, standalone, search_enabled, selected_model = parse_flags_and_content(message)
+    # Parse the flags and content
+    message_content, standalone, search_enabled, selected_model = parse_flags_and_content(message)
 
-  # If user asked for help (no quotes or "help")
-  if message_content == "HELP_COMMAND":
-    await send_help_embed(ctx)
-    return
+    # If user asked for help (no quotes or "help")
+    if message_content == "HELP_COMMAND":
+      await send_help_embed(ctx)
+      return
 
-  # If user asked for model list
-  if message_content == "MODELS_LIST":
-    await send_models_list(ctx)
-    return
+    # If user asked for model list
+    if message_content == "MODELS_LIST":
+      await send_models_list(ctx)
+      return
 
-  # If no quoted text found and it's not help/models
-  if not message_content:
-    await ctx.send("Please provide a message within quotes. For help, type: `7/ai help`.")
-    return
+    # If no quoted text found and it's not help/models
+    if not message_content:
+      await ctx.send("Please provide a message within quotes. For help, type: `7/ai help`.")
+      return
 
-  # Validate model
-  if selected_model not in available_models:
-    model_list_str = ", ".join(available_models) if available_models else "No models currently available."
-    await ctx.send(f"Invalid model: **{selected_model}**.\nAvailable models: {model_list_str}")
-    return
+    # Validate model
+    if selected_model not in available_models:
+      model_list_str = ", ".join(available_models) if available_models else "No models currently available."
+      await ctx.send(f"Invalid model: **{selected_model}**.\nAvailable models: {model_list_str}")
+      return
 
-  # Validate -search usage for GPT models only
-  if search_enabled and selected_model not in allowed_search_models:
-    await ctx.send(f"⚠️ The **{selected_model}** model does not support web search.")
-    # If you want to force it off but still continue:
-    if glasgow_block:
-       search_enabled = False
-    return
+    # Validate -search usage for GPT models only
+    if search_enabled and selected_model not in allowed_search_models:
+      await ctx.send(f"⚠️ The **{selected_model}** model does not support web search.")
+      # If you want to force it off but still continue:
+      if glasgow_block:
+         search_enabled = False
+      return
 
-  # Retrieve conversation or create a new one
-  user_id = str(ctx.author.id)
-  guild_id = str(ctx.guild.id)
+    # Retrieve conversation or create a new one
+    user_id = str(ctx.author.id)
+    guild_id = str(ctx.guild.id)
 
-  if standalone:
-    conversation = [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": message_content}
-    ]
-  else:
-    existing_convo = get_messages(guild_id, user_id)
-    # Insert system message right before user's new query
-    conversation = existing_convo + [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": message_content}
-    ]
+    if standalone:
+      conversation = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": message_content}
+      ]
+    else:
+      existing_convo = get_messages(guild_id, user_id)
+      # Insert system message right before user's new query
+      conversation = existing_convo + [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": message_content}
+      ]
 
-  # Truncate conversation if needed (placeholder)
-  conversation = truncate_conversation(conversation, model=selected_model, max_tokens=4000)
+    # Truncate conversation if needed (placeholder)
+    conversation = truncate_conversation(conversation, model=selected_model, max_tokens=4000)
 
-  # Show a "typing" indicator while generating the response
-  async with ctx.typing():
-    try:
-      print(f"AI Command: {message_content}")
-      print(f"Standalone: {standalone}")
-      print(f"Search Enabled: {search_enabled}")
-      print(f"Selected Model: {selected_model}")
-      # GPT4Free call (adjust to your actual library usage)
-      response = client.chat.completions.create(
-        model=selected_model,
-        messages=conversation,
-        web_search=search_enabled
-      )
-      ai_reply = response.choices[0].message.content
+    # Show a "typing" indicator while generating the response
+    async with ctx.typing():
+      try:
+        print(f"AI Command: {message_content}")
+        print(f"Standalone: {standalone}")
+        print(f"Search Enabled: {search_enabled}")
+        print(f"Selected Model: {selected_model}")
+        # GPT4Free call (adjust to your actual library usage)
+        response = client.chat.completions.create(
+          model=selected_model,
+          messages=conversation,
+          web_search=search_enabled
+        )
+        ai_reply = response.choices[0].message.content
 
-      # Split the reply if it's too long for a single Discord message
-      parts = split_into_chunks(ai_reply, 2000)
-      for part in parts:
-        await ctx.send(part)
+        # Split the reply if it's too long for a single Discord message
+        parts = split_into_chunks(ai_reply, 2000)
+        for part in parts:
+          await ctx.send(part)
 
-      # If not standalone, save user/assistant messages to DB
-      if not standalone:
-        save_message(guild_id, user_id, {"role": "user", "content": message_content})
-        save_message(guild_id, user_id, {"role": "assistant", "content": ai_reply})
+        # If not standalone, save user/assistant messages to DB
+        if not standalone:
+          save_message(guild_id, user_id, {"role": "user", "content": message_content})
+          save_message(guild_id, user_id, {"role": "assistant", "content": ai_reply})
 
-    except Exception as e:
-      await ctx.send(f"An error occurred: {str(e)}")
+      except Exception as e:
+        await ctx.send(f"An error occurred: {str(e)}")
 
 # -------------------------
 # Sending Help Embed
@@ -1048,37 +1014,37 @@ Deletes messages or entire channels based on flags.
              usage="7/http -rm / -rmc / -trf / -num")
 @commands.is_owner()
 async def http(ctx, *args):
-  if not args:
-    await ctx.send("Usage: `7/http help` for detailed info.")
-    return
+    if not args:
+      await ctx.send("Usage: `7/http help` for detailed info.")
+      return
 
-  channel = ctx.channel
+    channel = ctx.channel
 
-  if "help" in args:
-    embed = discord.Embed(title="HTTP Command",
-                          description=http_explanation,
-                          color=0x00ff00)
-    await ctx.send(embed=embed)
-    return
+    if "help" in args:
+      embed = discord.Embed(title="HTTP Command",
+                            description=http_explanation,
+                            color=0x00ff00)
+      await ctx.send(embed=embed)
+      return
 
-  if "-rm" in args or "-rmc" in args or "-rmc.trf" in args:
+    if "-rm" in args or "-rmc" in args or "-rmc.trf" in args:
 
-    channel_category = channel.category
-    channel_name = channel.name
-    channel_position = channel.position
-    channel_topic = channel.topic
+        channel_category = channel.category
+        channel_name = channel.name
+        channel_position = channel.position
+        channel_topic = channel.topic
 
-    target_channel = None
-    if "-rmc.trf" in args or "-trf" in args:
-      try:
-        target_channel = ctx.message.channel_mentions[0]
-      except IndexError:
-        await ctx.send("Please mention a valid target channel for message transfer.")
-        return
+        target_channel = None
+        if "-rmc.trf" in args or "-trf" in args:
+          try:
+            target_channel = ctx.message.channel_mentions[0]
+          except IndexError:
+            await ctx.send("Please mention a valid target channel for message transfer.")
+            return
 
-    if "-trf" in args or "-rmc.trf" in args:
+        if "-trf" in args or "-rmc.trf" in args:
 
-      await transfer_messages(ctx, channel, target_channel, args)
+          await transfer_messages(ctx, channel, target_channel, args)
 
     if "-rmc" in args or "-rmc.trf" in args:
         await channel_category.create_text_channel(
@@ -1089,59 +1055,59 @@ async def http(ctx, *args):
 
         return
 
-    if "-rm" in args or "-rmc" in args or "-rmc.trf" in args:
-      await channel.delete(reason="7/http command with -rm, -rmc or -rmc.trf flag")
-  if "-ai" in args or "-regex" in args:
-        await handle_scan_and_delete(ctx, args)
-        return
+    if "-rm" in args:
+        await channel.delete(reason="7/http command with -rm, -rmc or -rmc.trf flag")
+    if "-ai" in args or "-regex" in args:
+          await handle_scan_and_delete(ctx, args)
+          return
 
-  if "-all" in args:
-    countdown_message = await ctx.send(
-        "! - Server Purge Sequence Initiated: (--s) Run 7/shutdown -e to emergency cancel.")
+    if "-all" in args:
+      countdown_message = await ctx.send(
+          "! - Server Purge Sequence Initiated: (--s) Run 7/shutdown -e to emergency cancel.")
 
-    for i in range(10, 0, -1):
-      await countdown_message.edit(
-          content=f"! - Server Purge Sequence Initiated: ({i}s) Run 7/shutdown -e again to cancel.")
-      await asyncio.sleep(1)
+      for i in range(10, 0, -1):
+        await countdown_message.edit(
+            content=f"! - Server Purge Sequence Initiated: ({i}s) Run 7/shutdown -e again to cancel.")
+        await asyncio.sleep(1)
 
-    await countdown_message.edit(content="! - Delete All Sequence Initiated: (0s)")
-    await asyncio.sleep(0.5)
-    await countdown_message.edit(content="! - Delete All Sequence Finished - Deleting all channels, roles, and bans members.")
+      await countdown_message.edit(content="! - Delete All Sequence Initiated: (0s)")
+      await asyncio.sleep(0.5)
+      await countdown_message.edit(content="! - Delete All Sequence Finished - Deleting all channels, roles, and bans members.")
 
-    for channel in ctx.guild.channels:
+      for channel in ctx.guild.channels:
+        try:
+          await channel.delete(reason="7/http command with -all flag")
+        except Exception as e:
+          await ctx.send(f"Failed to delete {channel.name}: {e}")
+
+      for role in ctx.guild.roles:
+        try:
+          await role.delete(reason="7/http command with -all flag")
+        except Exception as e:
+          await ctx.send(f"Failed to delete role {role.name}: {e}")
+
+      for member in ctx.guild.members:
+        try:
+          if member != ctx.guild.owner and ctx.me.top_role > member.top_role:
+            await member.ban(reason="7/http command with -all flag")
+        except Exception as e:
+          await ctx.send(f"Failed to ban {member.name}: {e}")
+
+      return
+    if "-num" in args or "-trf.num" in args:
       try:
-        await channel.delete(reason="7/http command with -all flag")
-      except Exception as e:
-        await ctx.send(f"Failed to delete {channel.name}: {e}")
+        num_index = args.index("-num") + 1 if "-num" in args else args.index("-trf.num") + 2
+        num_messages = int(args[num_index])
+        target_channel = ctx.message.channel_mentions[0] if "-trf.num" in args else None
 
-    for role in ctx.guild.roles:
-      try:
-        await role.delete(reason="7/http command with -all flag")
-      except Exception as e:
-        await ctx.send(f"Failed to delete role {role.name}: {e}")
+        if "-trf.num" in args:
+          await transfer_messages(ctx, channel, target_channel, args, num_messages)
+        else:
+          await ctx.channel.purge(limit=num_messages + 1)
 
-    for member in ctx.guild.members:
-      try:
-        if member != ctx.guild.owner and ctx.me.top_role > member.top_role:
-          await member.ban(reason="7/http command with -all flag")
-      except Exception as e:
-        await ctx.send(f"Failed to ban {member.name}: {e}")
-
-    return
-  if "-num" in args or "-trf.num" in args:
-    try:
-      num_index = args.index("-num") + 1 if "-num" in args else args.index("-trf.num") + 2
-      num_messages = int(args[num_index])
-      target_channel = ctx.message.channel_mentions[0] if "-trf.num" in args else None
-
-      if "-trf.num" in args:
-        await transfer_messages(ctx, channel, target_channel, args, num_messages)
-      else:
-        await ctx.channel.purge(limit=num_messages + 1)
-
-    except (ValueError, IndexError):
-      await ctx.send("Invalid usage, please specify a valid number of messages.")
-    return
+      except (ValueError, IndexError):
+        await ctx.send("Invalid usage, please specify a valid number of messages.")
+      return
 
 async def handle_scan_and_delete(ctx, args):
     try:
@@ -1251,8 +1217,8 @@ Consider message content, context, and any patterns of inappropriate content."""
         return [messages[i-1] for i in numbers if 0 < i <= len(messages)]
 
     except Exception as e:
-        print(str(e))
-        raise RuntimeError(f"AI processing failed: {str(e)}")
+        print(e)
+        raise RuntimeError(f"AI processing failed: {str(e)}") from e
 
 async def review_and_confirm(ctx, flagged_messages):
     # Create review embed
@@ -1279,7 +1245,7 @@ async def review_and_confirm(ctx, flagged_messages):
     await control_msg.add_reaction("✏️")
 
     def check(reaction, user):
-        return user == ctx.author and str(reaction.emoji) in ["✅", "❌", "✏️"]
+        return user == ctx.author and str(reaction.emoji) in {"✅", "❌", "✏️"}
 
     try:
         reaction, user = await bot.wait_for("reaction_add", timeout=60.0, check=check)
@@ -1682,8 +1648,7 @@ async def create(ctx, role_name: str, role_color: str):
             return
 
 
-        existing_role = discord.utils.get(guild.roles, name=role_name)
-        if existing_role:
+        if existing_role := discord.utils.get(guild.roles, name=role_name):
             await ctx.send(f"{user.mention}, the role `{role_name}` already exists.")
             return
 
@@ -1802,69 +1767,69 @@ Multiple Choice questions.
              usage="7/poll <duration> <question> -yn / -mc <options 1-10>")
 @commands.has_permissions(manage_guild=True)
 async def poll(ctx, *args):
-  if args and args[0].lower() == "help":
-    embed = discord.Embed(title="Poll Command",
-                          description=poll_explanation,
-                          color=0x00ff00)
-    await ctx.send(embed=embed)
-    return
-
-  if len(args) < 2:
-    await ctx.send("Incorrect usage. For detailed help, type: `7/poll help`")
-    return
-
-  try:
-    duration = int(args[0])
-    question = args[1]
-  except (ValueError, IndexError):
-    await ctx.send("Invalid usage. Please specify a duration and a question.")
-    return
-
-  if "-yn" in args:
-    options = ["Yes", "No"]
-    reactions = ['✅', '❌']
-    await ctx.message.delete()
-  elif "-mc" in args:
-    try:
-      mc_index = args.index("-mc") + 1
-      question = ' '.join(args[:mc_index - 1])
-      options = args[mc_index:]
-      if len(options) < 2:
-        raise ValueError("Multiple choice polls require at least two options.")
-      reactions = [
-          '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'
-      ][:len(options)]
-    except ValueError as e:
-      await ctx.send(str(e))
+    if args and args[0].lower() == "help":
+      embed = discord.Embed(title="Poll Command",
+                            description=poll_explanation,
+                            color=0x00ff00)
+      await ctx.send(embed=embed)
       return
-    await ctx.message.delete()
-  else:
-    await ctx.send("Invalid usage. For detailed help, type: `7/poll help`")
-    return
 
-  description = []
-  for x, option in enumerate(options):
-    description += f'\n{reactions[x]} {option}'
-  embed = discord.Embed(title=question, description=''.join(description))
-  react_message = await ctx.send(embed=embed)
-  for reaction in reactions[:len(options)]:
-    await react_message.add_reaction(reaction)
+    if len(args) < 2:
+      await ctx.send("Incorrect usage. For detailed help, type: `7/poll help`")
+      return
 
-  await asyncio.sleep(duration)
-  react_message = await ctx.channel.fetch_message(react_message.id)
+    try:
+      duration = int(args[0])
+      question = args[1]
+    except (ValueError, IndexError):
+      await ctx.send("Invalid usage. Please specify a duration and a question.")
+      return
 
-  results = {}
-  for reaction in react_message.reactions:
-    if str(reaction.emoji) in reactions:
-      results[str(reaction.emoji)] = reaction.count - 1
+    if "-yn" in args:
+      options = ["Yes", "No"]
+      reactions = ['✅', '❌']
+      await ctx.message.delete()
+    elif "-mc" in args:
+      try:
+        mc_index = args.index("-mc") + 1
+        question = ' '.join(args[:mc_index - 1])
+        options = args[mc_index:]
+        if len(options) < 2:
+          raise ValueError("Multiple choice polls require at least two options.")
+        reactions = [
+            '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'
+        ][:len(options)]
+      except ValueError as e:
+        await ctx.send(str(e))
+        return
+      await ctx.message.delete()
+    else:
+      await ctx.send("Invalid usage. For detailed help, type: `7/poll help`")
+      return
 
-  winner = max(results.items(), key=lambda x: x[1])[0] if results else None
-  results_description = '\n'.join(
-      [f'{emoji} - {count} votes' for emoji, count in results.items()])
-  results_embed = discord.Embed(
-      title=f"The winning option is: {winner} with {results[winner]} votes!",
-      description=results_description)
-  await ctx.send(embed=results_embed)
+    description = []
+    for x, option in enumerate(options):
+      description += f'\n{reactions[x]} {option}'
+    embed = discord.Embed(title=question, description=''.join(description))
+    react_message = await ctx.send(embed=embed)
+    for reaction in reactions[:len(options)]:
+      await react_message.add_reaction(reaction)
+
+    await asyncio.sleep(duration)
+    react_message = await ctx.channel.fetch_message(react_message.id)
+
+    results = {
+        str(reaction.emoji): reaction.count - 1
+        for reaction in react_message.reactions
+        if str(reaction.emoji) in reactions
+    }
+    winner = max(results.items(), key=lambda x: x[1])[0] if results else None
+    results_description = '\n'.join(
+        [f'{emoji} - {count} votes' for emoji, count in results.items()])
+    results_embed = discord.Embed(
+        title=f"The winning option is: {winner} with {results[winner]} votes!",
+        description=results_description)
+    await ctx.send(embed=results_embed)
 
 
 bot.run(my_secret)
