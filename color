@@ -1,3 +1,0 @@
-texto =input("")
-print(f'\033[96m + {texto}')
-

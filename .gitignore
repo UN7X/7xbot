@@ -1,3 +1,12 @@
+backup_7xbot.py
+color
+database.json
+har_and_cookies/
+role_slots.json
+slowmode_settings.json
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
