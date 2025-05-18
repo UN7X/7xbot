@@ -106,7 +106,8 @@ async def terminal_repl():
             exec(code_obj, globals())
           output = buffer.getvalue()
         if not output:
-          output = "Code executed without output."
+          # output = "Code executed without output."
+          continue
         print(output)
       except Exception:
         print("Execution error:\n", traceback.format_exc())
@@ -253,6 +254,124 @@ async def force_status(ctx, *, status: str):
 
   await ctx.send(f"Status changed to: {status}")
 
+# ────────────────────────────────────────────────────────────────────────────────
+# 7/repl  – owner-only live Python REPL that streams its output in Discord
+# ────────────────────────────────────────────────────────────────────────────────
+import textwrap                                               # add with the other imports
+
+REPL_TIMEOUT = 15 * 60   # seconds of inactivity before the session auto-closes
+repl_sessions: dict[int, asyncio.Task] = {}   # channel-id → running task
+
+
+@bot.command(name="repl",
+             help="Start an owner-only live Python REPL in this channel.",
+             usage="7/repl   ← start | exit() / quit() to stop")
+@commands.is_owner()
+async def repl(ctx: commands.Context):
+    """
+    Interactive, *unsandboxed* Python – each line you send is executed.
+    The bot edits one message so you get a scrolling terminal-style view.
+    Use `exit()` or `quit()` (or let it time-out) to leave.
+    """
+    # If there’s already a session in this channel, ignore the new request.
+    if ctx.channel.id in repl_sessions:
+        await ctx.send("A REPL is already active in this channel.")
+        return
+
+    # Persistent namespace for this session only
+    env = {
+        "__builtins__": __builtins__,
+        "bot": bot,
+        "ctx": ctx,
+        "discord": discord,
+        "asyncio": asyncio,
+        # feel free to expose extras here (db, client, …)
+    }
+
+    banner = "# ‣ Python REPL started – type exit() or quit() to stop\n>>> "
+    log_lines: list[str] = [banner]
+
+    # The message we’ll keep editing so the log scrolls in place
+    term_msg = await ctx.send(f"```py\n{banner}```")
+
+    def fmt_log() -> str:
+        """Return the current log chunk wrapped in a code-block, truncated to 2 000 chars."""
+        txt = "\n".join(log_lines)[-1950:]          # keep breathing room for the ```py
+        return f"```py\n{txt}\n```"
+
+    # Helper to append & display new output
+    async def push(line: str):
+        log_lines.append(line)
+        payload = fmt_log()
+        # If the edited message would be too large, send a fresh one instead.
+        if len(payload) > 2000:
+            await ctx.send(payload)
+            log_lines.clear()
+        else:
+            await term_msg.edit(content=payload)
+
+    # Wait-loop lives in its own task so multiple channels can run REPLs concurrently
+    async def repl_loop():
+        try:
+            while True:
+                # wait for the owner’s next message in this channel
+                def check(m):
+                    return m.author == ctx.author and m.channel == ctx.channel
+
+                try:
+                    user_msg = await bot.wait_for("message",
+                                                  check=check,
+                                                  timeout=REPL_TIMEOUT)
+                except asyncio.TimeoutError:
+                    await push("\n# Session timed-out, REPL closed.")
+                    break
+
+                src = user_msg.content.strip()
+                # Allow triple-back-tick blocks; strip fences if present
+                if src.startswith("```") and src.endswith("```"):
+                    src = "\n".join(src.splitlines()[1:-1])
+
+                if src in {"exit()", "quit()", "exit", "quit"}:
+                    await push("\n# REPL closed.")
+                    break
+
+                # Echo the input to the log
+                await push(f">>> {src}")
+
+                # Capture stdout/stderr
+                with io.StringIO() as buf, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    try:
+                        try:
+                            # try expression first, then statements
+                            compiled = compile(src, "<repl>", "eval")
+                            result = eval(compiled, env)
+                            if asyncio.iscoroutine(result):
+                                result = await result
+                        except SyntaxError:
+                            compiled = compile(src, "<repl>", "exec")
+                            exec(compiled, env)
+                            result = None
+                    except Exception:
+                        result = traceback.format_exc()
+
+                    output = buf.getvalue()
+
+                # Prepare what to print back
+                lines = []
+                if output:
+                    lines.append(output.rstrip())
+                if result is not None:
+                    lines.append(repr(result))
+                if not lines:
+                    lines.append("None")
+
+                await push("\n".join(lines))
+        finally:
+            # Clean-up so another session can be started later
+            repl_sessions.pop(ctx.channel.id, None)
+
+    # Store and start the task
+    repl_sessions[ctx.channel.id] = asyncio.create_task(repl_loop())
 
 async def change_status_task():
     global status_hold, temporary_status, temporary_status_time, status_queue
