@@ -830,16 +830,14 @@ async def change_status_task():
         await asyncio.sleep(10)
 
 
-shop_items = {
-    'item1': {
-        'price': 100,
-        'description': 'Item 1 Description'
-    },
-    'item2': {
-        'price': 200,
-        'description': 'Item 2 Description'
-    },
-    # placeholder for later updates
+shop_items_regular = {
+    "vip": {"price": 100, "description": "Temporary VIP role"},
+    "nickname": {"price": 50, "description": "Change your nickname"},
+}
+
+shop_items_prankful = {
+    "spam_ping": {"price": 20, "description": "One use of spam ping"},
+    "sudo": {"price": 30, "description": "Impersonate another user once"},
 }
 
 @bot.command(name="echo")
@@ -859,28 +857,43 @@ async def echo(ctx, *, message: Optional[str] = None):
     except discord.NotFound:
         pass # Message already deleted
 
-@bot.command(name="shop")
+@bot.group(name="shop", invoke_without_command=True)
 async def shop(ctx, *, args: Optional[str] = None):
     if args and args.lower() == "help":
         embed = discord.Embed(title="Shop Command Help", description=shop_explanation, color=0x00ff00)
         await ctx.send(embed=embed)
         return
-    if args: # If any other arg is passed, show help as shop takes no args
+    if args:
         embed = discord.Embed(title="Shop Command Help", description=shop_explanation, color=0x00ff00)
         await ctx.send(embed=embed)
         return
 
-    embed = discord.Embed(title="7x Shop",
-                        description="Available items to purchase with points:",
-                        color=0x00ff00)
-    if not shop_items:
+    items = get_shop_items_for_guild(ctx.guild.id)
+    embed = discord.Embed(title="7x Shop", description="Available items to purchase with points:", color=0x00ff00)
+    if not items:
         embed.description = "The shop is currently empty."
     else:
-        for item_id, details in shop_items.items():
-            embed.add_field(name=f"{item_id} - {details['price']} points",
-                            value=details['description'],
-                            inline=False)
+        for item_id, details in items.items():
+            embed.add_field(name=f"{item_id} - {details['price']} points", value=details['description'], inline=False)
     await ctx.send(embed=embed)
+
+@shop.command(name="buy")
+async def shop_buy(ctx, item: Optional[str] = None):
+    if not item:
+        await ctx.send("Specify an item to buy. Use `7/shop` to view items.")
+        return
+    items = get_shop_items_for_guild(ctx.guild.id)
+    details = items.get(item)
+    if not details:
+        await ctx.send("That item is not available.")
+        return
+    user_id = str(ctx.author.id)
+    cost = details["price"]
+    if check_points(user_id) < cost:
+        await ctx.send("You don't have enough points.")
+        return
+    update_points(user_id, -cost)
+    await ctx.send(f"Purchased {item} for {cost} points!")
 
 @bot.command(
     name="fillerspam",
@@ -1132,6 +1145,27 @@ async def cancel(ctx, *, args: Optional[str] = None):
     await ctx.send(f"Global 'ecancel' flag set to: {ecancel}")
 
 
+@bot.command(name="man")
+async def man_command(ctx, *, arg: Optional[str] = None):
+    if arg is None or arg.strip() == "":
+        await ctx.send("Please provide a command name or `--list`.")
+    elif arg.strip() in ["--list", "--l"]:
+        names = ", ".join(f"`{name}`" for name in man_pages.keys())
+        await ctx.send(f"Available commands:\n{names}")
+    elif arg.strip() in man_pages:
+        embed = discord.Embed(title=f"Manual Entry for `{arg.strip()}`", description=man_pages[arg.strip()], color=0x00ff00)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send(f"No manual entry for '{arg}'.")
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, MissingRequiredArgument):
+        command = ctx.command
+        await ctx.send(f"Missing required argument for {command.name}: {error.param.name}. Usage: {command.usage}")
+
+
 @bot.command(name='tc',
              ignore_extra=False, # This is default, can be removed
              help="Tests if 7x can send a message in a channel.", # help is already in decorator
@@ -1252,6 +1286,17 @@ def save_db(data, filename="database.json"):
         json.dump(data, f, indent=4)
 
 db = load_db()
+
+def get_server_config(guild_id: int):
+  return db.get("config", {}).get(str(guild_id), {})
+
+def get_shop_items_for_guild(guild_id: int):
+  eco = get_server_config(guild_id).get("economy", "none")
+  if eco == "regular":
+    return shop_items_regular
+  if eco == "prankful":
+    return shop_items_prankful
+  return {}
 
 def save_message(guild_id, user_id, message):
   """

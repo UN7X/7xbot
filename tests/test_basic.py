@@ -152,3 +152,25 @@ def test_setup_wizard_help(monkeypatch):
     assert any(hasattr(msg, "title") and "Setup Command Help" in msg.title for msg in sends)
 
 
+def test_get_shop_items():
+    botmod.db = {"config": {"42": {"economy": "prankful"}}}
+    items = botmod.get_shop_items_for_guild(42)
+    assert "spam_ping" in items
+
+
+def test_man_command_list(monkeypatch):
+    sends = []
+
+    async def fake_send(content=None, embed=None):
+        sends.append(content or embed)
+
+    ctx = types.SimpleNamespace(send=fake_send)
+
+    monkeypatch.setattr(botmod, "man_pages", {"a": "b", "c": "d"})
+
+    import asyncio
+    asyncio.run(botmod.man_command(ctx, arg="--list"))
+
+    assert "a" in sends[0]
+
+
