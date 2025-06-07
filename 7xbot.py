@@ -18,6 +18,7 @@ import random
 import string
 import time # 4 MyBot setup_hook
 import json
+import psutil
 
 # --- Argument Parsing for --eco flag ---
 parser = argparse.ArgumentParser(description="7x: A Discord bot.")
@@ -59,6 +60,13 @@ def days_until_christmas():
 
   delta = christmas - today
   return delta.days
+
+def get_bot_info(bot: commands.Bot, ctx: Optional[commands.Context] | None = None):
+  """Return basic bot info such as ping, shard ID and CPU load."""
+  ping_ms = round(bot.latency * 1000)
+  shard_id = ctx.guild.shard_id if ctx and ctx.guild else 0
+  load = psutil.cpu_percent(interval=None)
+  return {"ping_ms": ping_ms, "shard_id": shard_id, "cpu_load": load}
 
 status_hold = False
 temporary_status = None
@@ -299,6 +307,17 @@ Placeholder command. (Functionality to be defined)
 """
 man_pages["derhop"] = derhop_explanation
 
+# Explanation for the 'setup' command
+setup_explanation = """
+***Info:***
+Starts an interactive wizard to configure this server. (Manage Guild required)
+
+**Usage:**
+`7/setup` - Begin the wizard.
+`7/setup help` - Shows this help message.
+"""
+man_pages["setup"] = setup_explanation
+
 # Explanation for the 'shutdown' command
 shutdown_explanation = """
 ***Info:***
@@ -398,6 +417,13 @@ async def on_ready():
   print('------')
   bot.loop.create_task(change_status_task())
 
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+  # Notify guild admins about setup
+  channel = guild.system_channel or next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
+  if channel:
+    await channel.send("Thanks for adding me! Server admins can run `7/setup` to configure the bot.")
+
 @bot.group(invoke_without_command=True, help="General beta features and info.")
 async def beta(ctx, option: Optional[str] = None, *, sub_command_args: Optional[str] = None):
     if option == "help":
@@ -407,7 +433,10 @@ async def beta(ctx, option: Optional[str] = None, *, sub_command_args: Optional[
     if option is None:
         await ctx.send("Please provide a valid option: `info`, `tester`, or `help`.")
     elif option == "info":
-        await ctx.send(f"Build ID: {get_build_id()} | Uptime: {get_uptime()}")
+        info = get_bot_info(bot, ctx)
+        await ctx.send(
+            f"Build ID: {get_build_id()} | Uptime: {get_uptime()} | Ping: {info['ping_ms']}ms | Shard: {info['shard_id']} | CPU: {info['cpu_load']}%"
+        )
     elif option == "tester":
         if sub_command_args:
             await ctx.invoke(bot.get_command('tester'), sub_command_args)
@@ -500,6 +529,50 @@ async def ggb(ctx, state: Optional[str] = None):
         await ctx.send(f"Glasgow Block: {word}")
     else:
         await ctx.send(f"""Error: Expected boolean value (true/false) or 'help', received: "{state}" """)
+
+@bot.command(name="setup")
+@commands.has_permissions(manage_guild=True)
+async def setup_wizard(ctx, *, args: Optional[str] = None):
+    if args and args.lower() == "help":
+        embed = discord.Embed(title="Setup Command Help", description=setup_explanation, color=0x00ff00)
+        await ctx.send(embed=embed)
+        return
+    if args:
+        embed = discord.Embed(title="Setup Command Help", description=setup_explanation, color=0x00ff00)
+        await ctx.send(embed=embed)
+        return
+
+    await ctx.send("Starting setup wizard. Reply with 'cancel' at any time to stop.")
+
+    def check(m: discord.Message):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    config = {}
+
+    await ctx.send("Enter strike roles separated by spaces or 'none':")
+    msg = await bot.wait_for('message', check=check)
+    if msg.content.lower() == 'cancel':
+        await ctx.send("Setup cancelled.")
+        return
+    config['strike_roles'] = [r.id for r in msg.role_mentions]
+
+    await ctx.send("Enable AI features? (yes/no):")
+    msg = await bot.wait_for('message', check=check)
+    if msg.content.lower() == 'cancel':
+        await ctx.send("Setup cancelled.")
+        return
+    config['ai_enabled'] = msg.content.lower().startswith('y')
+
+    await ctx.send("Economy type (regular/prankful/none):")
+    msg = await bot.wait_for('message', check=check)
+    if msg.content.lower() == 'cancel':
+        await ctx.send("Setup cancelled.")
+        return
+    config['economy'] = msg.content.lower()
+
+    db.setdefault('config', {})[str(ctx.guild.id)] = config
+    save_db(db)
+    await ctx.send("Setup complete.")
 
 
 
@@ -2376,4 +2449,5 @@ async def poll(ctx, *args):
     await ctx.send(embed=results_embed)
 
 
-bot.run(my_secret)
+if __name__ == "__main__":
+  bot.run(my_secret)
