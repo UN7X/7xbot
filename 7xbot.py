@@ -61,7 +61,10 @@ def days_until_christmas():
   delta = christmas - today
   return delta.days
 
-def get_bot_info(bot: commands.Bot, ctx: Optional[commands.Context] = None):
+  try:
+    load = psutil.Process().cpu_percent(interval=0.1)
+  except Exception:
+    load = psutil.cpu_percent(interval=0.1)
   """Return basic bot info such as ping, shard ID and CPU load."""
   ping_ms = round(bot.latency * 1000)
   shard_id = ctx.guild.shard_id if ctx and ctx.guild else 0
@@ -420,8 +423,7 @@ async def on_ready():
 @bot.event
 async def on_guild_join(guild: discord.Guild):
   # Notify guild admins about setup
-  channel = guild.system_channel or next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None)
-  if channel:
+  if channel := guild.system_channel or next((c for c in guild.text_channels if c.permissions_for(guild.me).send_messages), None):
     await channel.send("Thanks for adding me! Server admins can run `7/setup` to configure the bot.")
 
 @bot.group(invoke_without_command=True, help="General beta features and info.")
@@ -544,33 +546,57 @@ async def setup_wizard(ctx, *, args: Optional[str] = None):
 
     await ctx.send("Starting setup wizard. Reply with 'cancel' at any time to stop.")
 
-    def check(m: discord.Message):
-        return m.author == ctx.author and m.channel == ctx.channel
+    class SetupCancelled(Exception):
+        pass
+
+    async def ask(prompt: str, parser):
+        await ctx.send(prompt)
+        try:
+            msg = await bot.wait_for(
+                "message",
+                check=lambda m: m.author == ctx.author and m.channel == ctx.channel,
+                timeout=60,
+            )
+        except asyncio.TimeoutError:
+            await ctx.send("Timed out waiting for a response. Setup cancelled.")
+            raise SetupCancelled
+        if msg.content.lower() == "cancel":
+            await ctx.send("Setup cancelled.")
+            raise SetupCancelled
+        return parser(msg)
+
+    questions = [
+        (
+            "strike_roles",
+            "Enter strike roles by mentioning them separated by spaces or 'none':",
+            lambda m: [r.id for r in m.role_mentions],
+        ),
+        (
+            "ai_enabled",
+            "Enable AI features? (yes/no):",
+            lambda m: m.content.lower().startswith("y"),
+        ),
+        (
+            "economy",
+            "Economy type (regular/prankful/none):",
+            lambda m: m.content.lower(),
+        ),
+    ]
 
     config = {}
-
-    await ctx.send("Enter strike roles separated by spaces or 'none':")
-    msg = await bot.wait_for('message', check=check)
-    if msg.content.lower() == 'cancel':
-        await ctx.send("Setup cancelled.")
+    try:
+        for key, prompt, parser in questions:
+            value = await ask(prompt, parser)
+            if key == "economy" and value not in {"regular", "prankful", "none"}:
+                await ctx.send(
+                    "Invalid economy type. Please choose 'regular', 'prankful', or 'none'."
+                )
+                raise SetupCancelled
+            config[key] = value
+    except SetupCancelled:
         return
-    config['strike_roles'] = [r.id for r in msg.role_mentions]
 
-    await ctx.send("Enable AI features? (yes/no):")
-    msg = await bot.wait_for('message', check=check)
-    if msg.content.lower() == 'cancel':
-        await ctx.send("Setup cancelled.")
-        return
-    config['ai_enabled'] = msg.content.lower().startswith('y')
-
-    await ctx.send("Economy type (regular/prankful/none):")
-    msg = await bot.wait_for('message', check=check)
-    if msg.content.lower() == 'cancel':
-        await ctx.send("Setup cancelled.")
-        return
-    config['economy'] = msg.content.lower()
-
-    db.setdefault('config', {})[str(ctx.guild.id)] = config
+    db.setdefault("config", {})[str(ctx.guild.id)] = config
     save_db(db)
     await ctx.send("Setup complete.")
 
