@@ -61,7 +61,7 @@ def days_until_christmas():
   delta = christmas - today
   return delta.days
 
-def get_bot_info(bot: commands.Bot, ctx: Optional[commands.Context] | None = None):
+def get_bot_info(bot: commands.Bot, ctx: Optional[commands.Context] = None):
   """Return basic bot info such as ping, shard ID and CPU load."""
   ping_ms = round(bot.latency * 1000)
   shard_id = ctx.guild.shard_id if ctx and ctx.guild else 0
