@@ -1,0 +1,36 @@
+{
+  "name": "Advanced Discord Bot",
+  "description": "A feature-rich Discord bot with moderation, music, economy, and more",
+  "repository": "https://github.com/yourusername/advanced-discord-bot",
+  "keywords": ["discord", "bot", "python", "discord.py"],
+  "env": {
+    "DISCORD_TOKEN": {
+      "description": "Your Discord bot token",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Your Discord user ID",
+      "required": true
+    },
+    "DEFAULT_PREFIX": {
+      "description": "Default command prefix",
+      "value": "!",
+      "required": false
+    },
+    "ADDITIONAL_OWNER_IDS": {
+      "description": "Additional bot owner IDs (comma separated)",
+      "required": false
+    }
+  },
+  "addons": [
+    "heroku-postgresql:hobby-dev"
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    },
+    {
+      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
+    }
+  ]
+}
