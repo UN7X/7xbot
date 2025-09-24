@@ -177,7 +177,7 @@ class BotEvents(commands.Cog):
                     type=discord.ActivityType.watching, name=next_status))
             else:
                 new_status = random.choice(tips)
-                while new_status == last_status:
+                while new_status == last_status and len(tips) > 1:
                     new_status = random.choice(tips)
                 await self.bot.change_presence(activity=discord.Activity(
                     type=discord.ActivityType.watching, name=new_status))

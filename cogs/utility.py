@@ -133,6 +133,23 @@ if 7x can send a message in that channel.
         else:
             await ctx.send("Success")
     
+    @commands.command(name="query-status")
+    @commands.has_permissions(manage_guild=True)
+    async def query_status(self, ctx, *, messages: str):
+        """Queue status messages"""
+        # Import status_queue from events cog
+        events_cog = self.bot.get_cog('BotEvents')
+        if events_cog:
+            # Split the messages by quotes and filter out any empty strings
+            messages_list = [msg for msg in messages.split('"') if msg.strip()]
+            # Access the status_queue from events
+            from cogs.events import status_queue
+            status_queue.extend(messages_list)
+            
+            await ctx.send(f"Queued {len(messages_list)} statuses.")
+        else:
+            await ctx.send("Events cog not loaded - cannot queue statuses.")
+    
     @commands.command()
     async def derhop(self, ctx, *args):
         """Derhop command"""
