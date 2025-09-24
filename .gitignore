@@ -4,7 +4,9 @@ database.json
 har_and_cookies/
 role_slots.json
 slowmode_settings.json
-
+restart_flag
+bot_restart.log
+.env
 
 
 # Byte-compiled / optimized / DLL files
